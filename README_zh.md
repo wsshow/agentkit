@@ -12,7 +12,9 @@
 - **转向与后续消息队列** — 在执行过程中注入消息以重定向 Agent 或追加后续任务
 - **人机协作（HITL）** — 中断 Agent 执行并在用户提供数据后恢复
 - **流式输出** — 通过 Eino ADK 流式传输实时逐 token 输出
+- **推理模型支持** — 原生支持思考/推理模型（DeepSeek-R1、o1 等），流式输出推理过程
 - **工具集成** — 接入任何 Eino 兼容工具，自动处理工具调用
+- **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
 ## 安装
 
@@ -31,8 +33,6 @@ import (
 	"log"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/wsshow/agentkit"
 )
 
@@ -53,20 +53,22 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	defer agent.Close()
 
 	agent.Subscribe(func(e agentkit.Event) {
 		switch e.Type {
+		case agentkit.EventReasoningDelta:
+			fmt.Print(e.Delta) // 推理/思考过程的流式输出（推理模型）
 		case agentkit.EventMessageDelta:
 			fmt.Print(e.Delta)
-		case agentkit.EventToolStart:
-			fmt.Printf("\n调用工具: %s\n", e.ToolCalls[0].Function.Name)
+		case agentkit.EventMessageEnd:
+			fmt.Println()
 		case agentkit.EventError:
 			fmt.Printf("错误: %v\n", e.Error)
 		}
 	})
 
-	err = agent.Prompt(ctx, "你好！")
-	if err != nil {
+	if err := agent.Prompt(ctx, "你好！"); err != nil {
 		log.Fatalln(err)
 	}
 }
@@ -74,21 +76,38 @@ func main() {
 
 ## 事件类型
 
-| 事件                | 说明                                        |
-| ------------------- | ------------------------------------------- |
-| `EventAgentStart`   | Agent 开始处理                              |
-| `EventTurnStart`    | 新一轮开始（一次 LLM 调用 + 工具执行周期）  |
-| `EventMessageStart` | 消息开始（流式或非流式）                    |
-| `EventMessageDelta` | 流式增量文本（通过 `Event.Delta` 获取）     |
-| `EventMessageEnd`   | 消息结束（完整内容在 `Event.Content` 中）   |
-| `EventToolStart`    | 工具调用请求（详情在 `Event.ToolCalls` 中） |
-| `EventToolUpdate`   | 工具执行进度更新                            |
-| `EventToolEnd`      | 工具调用结果返回                            |
-| `EventTurnEnd`      | 一轮结束                                    |
-| `EventTransfer`     | Agent 转移（多 Agent 场景）                 |
-| `EventInterrupted`  | HITL 中断（详情在 `Event.Interrupt` 中）    |
-| `EventAgentEnd`     | Agent 处理完成                              |
-| `EventError`        | 发生错误（详情在 `Event.Error` 中）         |
+| 事件                  | 说明                                                                        |
+| --------------------- | --------------------------------------------------------------------------- |
+| `EventAgentStart`     | Agent 开始处理                                                              |
+| `EventTurnStart`      | 新一轮开始（一次 LLM 调用 + 工具执行周期）                                  |
+| `EventMessageStart`   | 消息开始（流式或非流式）                                                    |
+| `EventReasoningDelta` | 推理/思考过程流式增量（`Event.Delta`），仅推理模型                          |
+| `EventMessageDelta`   | 流式增量文本（`Event.Delta`）                                               |
+| `EventMessageEnd`     | 消息结束（`Event.Content`、`Event.ReasoningContent`、`Event.ResponseMeta`） |
+| `EventToolStart`      | 工具调用请求（`Event.ToolCalls`）                                           |
+| `EventToolUpdate`     | 工具执行进度更新（`Event.Content`）                                         |
+| `EventToolEnd`        | 工具调用结果返回（`Event.Content`）                                         |
+| `EventTurnEnd`        | 一轮结束                                                                    |
+| `EventTransfer`       | Agent 转移（多 Agent 场景）                                                 |
+| `EventInterrupted`    | HITL 中断（`Event.Interrupt`）                                              |
+| `EventAgentEnd`       | Agent 处理完成                                                              |
+| `EventError`          | 发生错误（`Event.Error`）                                                   |
+
+### Event 结构体
+
+```go
+type Event struct {
+    Type             EventType
+    Agent            string           // 产生事件的 Agent 名称
+    Content          string           // 文本内容（message_end / tool_end）
+    Delta            string           // 流式增量内容（message_delta / reasoning_delta）
+    ReasoningContent string           // 完整推理内容（message_end，仅推理模型）
+    ResponseMeta     *ResponseMeta    // 响应元数据：token 用量、完成原因（message_end）
+    ToolCalls        []ToolCall       // 工具调用列表（tool_start）
+    Interrupt        []InterruptPoint // 中断点列表（interrupted）
+    Error            error            // 错误信息（error）
+}
+```
 
 ## API 参考
 
@@ -96,12 +115,15 @@ func main() {
 
 ```go
 agent, err := agentkit.New(ctx, &agentkit.Config{
-	Name:          "my-agent",
-	Description:   "Agent 描述",
-	SystemPrompt:  "系统指令",
-	Model:         chatModel,
-	Tools:         []agentkit.Tool{},
-	MaxIterations: 20,                 // 最大 LLM 调用轮次（默认 20）
+    Name:            "my-agent",
+    Description:     "Agent 描述",
+    SystemPrompt:    "系统指令",
+    Model:           chatModel,                          // agentkit.ChatModel
+    Tools:           []agentkit.Tool{myTool},             // 可选
+    Middlewares:      []adk.AgentMiddleware{},             // Agent 级别钩子（可选）
+    ModelMiddlewares: []adk.ChatModelAgentMiddleware{},    // 模型级别钩子（可选）
+    MaxIterations:   20,                                  // 最大 LLM 调用轮次（默认 20）
+    CheckPointStore: store,                               // 检查点存储（可选）
 })
 defer agent.Close()
 ```
@@ -130,6 +152,9 @@ agent.Reset()
 // 获取完整对话历史（eino schema.Message，用于调试/持久化）
 history := agent.History()
 
+// 获取 Agent 状态（消息记录、流式状态）
+state := agent.State()
+
 // 关闭 Agent，释放资源（实现 io.Closer 接口）
 agent.Close()
 ```
@@ -148,6 +173,27 @@ agent.FollowUp("另外请检查 Y")
 // 配置队列处理模式
 agent.SetSteeringMode(agentkit.QueueModeAll)        // 一次性处理所有排队消息
 agent.SetFollowUpMode(agentkit.QueueModeOneAtATime)  // 逐条处理（默认）
+
+// 清空队列
+agent.ClearSteeringQueue()
+agent.ClearFollowUpQueue()
+agent.ClearAllQueues()
+```
+
+### HITL（人机协作）
+
+```go
+// 在工具中：触发中断
+return "", agentkit.Interrupt(ctx, "需要用户确认")
+
+// 带状态保存的中断
+return "", agentkit.StatefulInterrupt(ctx, "确认？", myState)
+
+// 在恢复后的工具中：检查中断状态
+wasInterrupted, hasState, state := agentkit.GetInterruptState[MyState](ctx)
+
+// 获取用户恢复数据
+isTarget, hasData, data := agentkit.GetResumeContext[bool](ctx)
 ```
 
 ### 工具进度更新
@@ -156,12 +202,31 @@ agent.SetFollowUpMode(agentkit.QueueModeOneAtATime)  // 逐条处理（默认）
 
 ```go
 func myTool(ctx context.Context, input string) (string, error) {
-	agentkit.EmitToolUpdate(ctx, "正在处理第 1 步...")
-	// ... 执行工作 ...
-	agentkit.EmitToolUpdate(ctx, "正在处理第 2 步...")
-	return "result", nil
+    agentkit.EmitToolUpdate(ctx, "正在处理第 1 步...")
+    // ... 执行工作 ...
+    agentkit.EmitToolUpdate(ctx, "正在处理第 2 步...")
+    return "result", nil
 }
 ```
+
+### 类型别名
+
+AgentKit 提供类型别名，消费者无需直接导入 eino 包：
+
+| 别名           | Eino 类型             |
+| -------------- | --------------------- |
+| `ChatModel`    | `model.BaseChatModel` |
+| `Tool`         | `tool.BaseTool`       |
+| `ToolCall`     | `schema.ToolCall`     |
+| `ResponseMeta` | `schema.ResponseMeta` |
+| `TokenUsage`   | `schema.TokenUsage`   |
+
+## 示例
+
+查看 [examples](examples/) 目录：
+
+- **[simple](examples/simple/)** — 最简多轮对话（~60 行）
+- **[full](examples/full/)** — 综合 7 场景演示（工具调用、历史上下文、重置、后续消息、转向、HITL、状态检查）
 
 ## 许可证
 
