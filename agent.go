@@ -142,6 +142,30 @@ func (a *Agent) Prompt(ctx context.Context, input string) error {
 	return a.run(ctx)
 }
 
+// Send 发送多模态内容并驱动 Agent 执行。
+// 使用 Text、ImageURL、AudioURL 等构造函数创建 ContentPart。
+// 如果 Agent 已在执行中，返回错误。
+func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
+	if err := a.startRun(); err != nil {
+		return err
+	}
+	defer a.endRun()
+
+	// 提取纯文本用于 State 记录
+	var textContent string
+	for _, p := range parts {
+		if p.Type == schema.ChatMessagePartTypeText {
+			textContent += p.Text
+		}
+	}
+	a.state.AddMessage(Message{Role: RoleUser, Content: textContent})
+	a.appendHistory(&schema.Message{
+		Role:                  schema.User,
+		UserInputMultiContent: parts,
+	})
+	return a.run(ctx)
+}
+
 // Continue 从当前状态恢复执行（不添加新消息），用于错误后重试。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Continue(ctx context.Context) error {
