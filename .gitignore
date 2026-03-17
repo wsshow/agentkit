@@ -1,0 +1,8 @@
+.DS_Store
+.env
+*.log
+*.tmp
+*.bak
+*.zip
+release/
+examples/

@@ -1,0 +1,331 @@
+package agentkit
+
+import (
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"sync"
+
+	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
+)
+
+// run 外层执行，包含 steering/follow-up 队列循环
+func (a *Agent) run(ctx context.Context) error {
+	ctx = context.WithValue(context.WithValue(ctx, emitterCtxKey{}, a.emtr), agentNameCtxKey{}, a.name)
+
+	a.emtr.Emit(Event{Type: EventAgentStart, Agent: a.name})
+
+	err := a.executeLoop(ctx)
+	err = a.processQueues(ctx, err)
+
+	a.emtr.Emit(Event{Type: EventAgentEnd, Agent: a.name})
+	return err
+}
+
+// processQueues 处理 steering/follow-up 队列
+func (a *Agent) processQueues(ctx context.Context, err error) error {
+	for err == nil {
+		if msgs := a.drainSteering(); len(msgs) > 0 {
+			for _, m := range msgs {
+				a.state.AddMessage(m)
+				a.appendHistory(schema.UserMessage(m.Content))
+			}
+			err = a.executeLoop(ctx)
+			continue
+		}
+		if msgs := a.drainFollowUp(); len(msgs) > 0 {
+			for _, m := range msgs {
+				a.state.AddMessage(m)
+				a.appendHistory(schema.UserMessage(m.Content))
+			}
+			err = a.executeLoop(ctx)
+			continue
+		}
+		break
+	}
+	return err
+}
+
+// executeLoop 执行一次 runner.Run，消费事件流。
+// 在工具结果事件后检查 steering 队列，若有消息则取消当前执行并返回 nil，
+// 由 processQueues 注入 steering 消息后重新执行。
+func (a *Agent) executeLoop(parentCtx context.Context) error {
+	a.mu.Lock()
+	history := make([]*schema.Message, len(a.history))
+	copy(history, a.history)
+	a.mu.Unlock()
+
+	iter := a.runner.Run(parentCtx, history, adk.WithCheckPointID(a.checkPointID))
+	return a.consumeIter(parentCtx, iter)
+}
+
+// executeResume 执行 HITL 恢复
+func (a *Agent) executeResume(parentCtx context.Context, targets map[string]any) error {
+	iter, err := a.runner.ResumeWithParams(parentCtx, a.checkPointID, &adk.ResumeParams{
+		Targets: targets,
+	})
+	if err != nil {
+		return err
+	}
+	return a.consumeIter(parentCtx, iter)
+}
+
+// consumeIter 消费事件迭代器，处理事件并检查 steering
+func (a *Agent) consumeIter(parentCtx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent]) error {
+	ctx, cancel := context.WithCancel(parentCtx)
+	a.mu.Lock()
+	a.cancelFn = cancel
+	a.mu.Unlock()
+
+	defer func() {
+		cancel()
+		a.mu.Lock()
+		a.cancelFn = nil
+		a.mu.Unlock()
+	}()
+
+	var lastErr error
+	a.inTurn.Store(false)
+	for {
+		select {
+		case <-ctx.Done():
+			a.endTurn()
+			a.emtr.Emit(Event{Type: EventError, Agent: a.name, Error: ctx.Err()})
+			return ctx.Err()
+		default:
+		}
+
+		event, ok := iter.Next()
+		if !ok {
+			break
+		}
+
+		if event.Err != nil {
+			lastErr = event.Err
+		}
+
+		if err := a.processEvent(ctx, event); err != nil {
+			lastErr = err
+		}
+
+		// 工具间粒度 steering：工具结果返回后检查转向队列
+		if event.Output != nil && event.Output.MessageOutput != nil &&
+			event.Output.MessageOutput.Role == schema.Tool && a.hasSteering() {
+			cancel()
+			a.endTurn()
+			return nil
+		}
+	}
+
+	a.endTurn()
+	return lastErr
+}
+
+func (a *Agent) hasSteering() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.steeringQueue) > 0
+}
+
+// processEvent 处理 eino AgentEvent 并转换为 agentkit Event
+func (a *Agent) processEvent(ctx context.Context, event *adk.AgentEvent) error {
+	agentName := event.AgentName
+
+	if event.Err != nil {
+		a.emtr.Emit(Event{Type: EventError, Agent: agentName, Error: event.Err})
+		return nil
+	}
+
+	if event.Action != nil {
+		a.processAction(agentName, event.Action)
+	}
+
+	if event.Output != nil && event.Output.MessageOutput != nil {
+		mo := event.Output.MessageOutput
+		// Assistant 消息标志新 turn 开始
+		if mo.Role == schema.Assistant {
+			a.endTurn()
+			a.inTurn.Store(true)
+			a.emtr.Emit(Event{Type: EventTurnStart, Agent: agentName})
+		}
+		return a.processOutput(ctx, agentName, mo)
+	}
+
+	return nil
+}
+
+func (a *Agent) processAction(agentName string, action *adk.AgentAction) {
+	if action.TransferToAgent != nil {
+		a.emtr.Emit(Event{
+			Type:    EventTransfer,
+			Agent:   agentName,
+			Content: action.TransferToAgent.DestAgentName,
+		})
+	}
+	if action.Interrupted != nil {
+		var points []InterruptPoint
+		for _, ic := range action.Interrupted.InterruptContexts {
+			points = append(points, InterruptPoint{ID: ic.ID, Info: ic.Info})
+		}
+		a.emtr.Emit(Event{
+			Type:      EventInterrupted,
+			Agent:     agentName,
+			Interrupt: points,
+		})
+	}
+}
+
+func (a *Agent) processOutput(ctx context.Context, agentName string, output *adk.MessageVariant) error {
+	if output.IsStreaming && output.MessageStream != nil {
+		return a.processStream(ctx, agentName, output.MessageStream)
+	} else if output.Message != nil {
+		a.processMessage(agentName, output.Message)
+	}
+	return nil
+}
+
+// processMessage 处理完整消息
+func (a *Agent) processMessage(agentName string, msg adk.Message) {
+	a.appendHistory(msg)
+
+	if msg.Role == schema.Tool {
+		a.emtr.Emit(Event{Type: EventToolEnd, Agent: agentName, Content: msg.Content})
+		return
+	}
+
+	a.emtr.Emit(Event{Type: EventMessageStart, Agent: agentName})
+
+	if len(msg.ToolCalls) > 0 {
+		a.emtr.Emit(Event{Type: EventToolStart, Agent: agentName, ToolCalls: msg.ToolCalls})
+	}
+
+	if msg.Content != "" {
+		a.state.AddMessage(Message{Role: RoleType(msg.Role), Agent: agentName, Content: msg.Content})
+	}
+
+	a.emtr.Emit(Event{Type: EventMessageEnd, Agent: agentName, Content: msg.Content})
+}
+
+// processStream 处理流式消息，返回流式传输过程中的错误
+func (a *Agent) processStream(ctx context.Context, agentName string, stream adk.MessageStream) error {
+	a.state.setStreaming(true)
+	a.emtr.Emit(Event{Type: EventMessageStart, Agent: agentName})
+
+	defer a.state.setStreaming(false)
+
+	var fullContent strings.Builder
+	var toolCalls []schema.ToolCall
+
+	for {
+		select {
+		case <-ctx.Done():
+			a.emtr.Emit(Event{Type: EventError, Agent: agentName, Error: ctx.Err()})
+			return ctx.Err()
+		default:
+		}
+
+		chunk, err := stream.Recv()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			a.emtr.Emit(Event{Type: EventError, Agent: agentName, Error: err})
+			return err
+		}
+
+		if chunk == nil {
+			continue
+		}
+
+		if chunk.Content != "" {
+			fullContent.WriteString(chunk.Content)
+			a.emtr.Emit(Event{Type: EventMessageDelta, Agent: agentName, Delta: chunk.Content})
+		}
+
+		if len(chunk.ToolCalls) > 0 {
+			toolCalls = mergeToolCalls(toolCalls, chunk.ToolCalls)
+		}
+	}
+
+	if len(toolCalls) > 0 {
+		a.emtr.Emit(Event{Type: EventToolStart, Agent: agentName, ToolCalls: toolCalls})
+	}
+
+	content := fullContent.String()
+	if content != "" {
+		a.state.AddMessage(Message{Role: RoleAssistant, Agent: agentName, Content: content})
+	}
+
+	a.appendHistory(&schema.Message{
+		Role:      schema.Assistant,
+		Content:   content,
+		ToolCalls: toolCalls,
+	})
+
+	a.emtr.Emit(Event{Type: EventMessageEnd, Agent: agentName, Content: content})
+	return nil
+}
+
+// mergeToolCalls 合并流式工具调用分片
+func mergeToolCalls(existing []schema.ToolCall, chunks []schema.ToolCall) []schema.ToolCall {
+	for _, chunk := range chunks {
+		idx := -1
+		if chunk.Index != nil {
+			idx = *chunk.Index
+		}
+
+		found := false
+		for i := range existing {
+			if existing[i].Index != nil && *existing[i].Index == idx && idx >= 0 {
+				existing[i].Function.Arguments += chunk.Function.Arguments
+				if chunk.ID != "" {
+					existing[i].ID = chunk.ID
+				}
+				if chunk.Function.Name != "" {
+					existing[i].Function.Name = chunk.Function.Name
+				}
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			existing = append(existing, chunk)
+		}
+	}
+	return existing
+}
+
+// endTurn 结束当前 turn（如果有）
+func (a *Agent) endTurn() {
+	if a.inTurn.CompareAndSwap(true, false) {
+		a.emtr.Emit(Event{Type: EventTurnEnd, Agent: a.name})
+	}
+}
+
+// inMemoryStore 内存 CheckPoint 存储
+type inMemoryStore struct {
+	mu  sync.Mutex
+	mem map[string][]byte
+}
+
+func newInMemoryStore() compose.CheckPointStore {
+	return &inMemoryStore{mem: map[string][]byte{}}
+}
+
+func (s *inMemoryStore) Set(_ context.Context, key string, value []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mem[key] = value
+	return nil
+}
+
+func (s *inMemoryStore) Get(_ context.Context, key string) ([]byte, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.mem[key]
+	return v, ok, nil
+}
