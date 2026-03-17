@@ -13,6 +13,7 @@ Inspired by [pi-agent-core](https://github.com/badlogic/pi-mono/tree/main/packag
 - **Human-in-the-loop (HITL)** — Interrupt agent execution and resume with user-provided data
 - **Streaming support** — Real-time token-by-token output via Eino ADK streaming
 - **Reasoning model support** — First-class support for thinking/reasoning models (DeepSeek-R1, o1, etc.) with streaming reasoning output
+- **Multimodal input** — Send text, images, audio, video, and files via `Send()` with ergonomic constructors
 - **Tool integration** — Plug in any Eino-compatible tool with automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
@@ -131,8 +132,14 @@ defer agent.Close()
 ### Core Methods
 
 ```go
-// Send user input and drive agent execution (blocking, thread-safe)
+// Send user text input and drive agent execution (blocking, thread-safe)
 err := agent.Prompt(ctx, "user message")
+
+// Send multimodal input (text + images, audio, video, files)
+err := agent.Send(ctx,
+    agentkit.Text("What is in this image?"),
+    agentkit.ImageURL("https://example.com/cat.jpg"),
+)
 
 // Resume from current state without new message (e.g. retry after error)
 err := agent.Continue(ctx)
@@ -196,6 +203,49 @@ wasInterrupted, hasState, state := agentkit.GetInterruptState[MyState](ctx)
 isTarget, hasData, data := agentkit.GetResumeContext[bool](ctx)
 ```
 
+### Multimodal Input
+
+`Send` accepts variadic `ContentPart` values built with constructor functions:
+
+```go
+// Text + image
+agent.Send(ctx,
+    agentkit.Text("What is in this image?"),
+    agentkit.ImageURL("https://example.com/cat.jpg"),
+)
+
+// Image with quality control
+agent.Send(ctx,
+    agentkit.Text("Describe in detail"),
+    agentkit.ImageURL("https://example.com/photo.jpg", agentkit.ImageDetailHigh),
+)
+
+// Base64 encoded image
+agent.Send(ctx,
+    agentkit.Text("Identify this"),
+    agentkit.ImageBase64(base64Data, "image/png"),
+)
+
+// Audio / Video / File
+agent.Send(ctx, agentkit.Text("Transcribe"), agentkit.AudioURL("https://example.com/speech.mp3"))
+agent.Send(ctx, agentkit.Text("Summarize"), agentkit.VideoURL("https://example.com/clip.mp4"))
+agent.Send(ctx, agentkit.Text("Analyze"), agentkit.FileURL("https://example.com/report.pdf"))
+```
+
+Available constructors:
+
+| Constructor                          | Description                          |
+| ------------------------------------ | ------------------------------------ |
+| `Text(s)`                            | Text content                         |
+| `ImageURL(url, detail...)`           | Image from URL (optional quality)    |
+| `ImageBase64(data, mime, detail...)` | Image from Base64                    |
+| `AudioURL(url)`                      | Audio from URL                       |
+| `AudioBase64(data, mime)`            | Audio from Base64                    |
+| `VideoURL(url)`                      | Video from URL                       |
+| `VideoBase64(data, mime)`            | Video from Base64                    |
+| `FileURL(url)`                       | File from URL                        |
+| `FileBase64(data, mime, name...)`    | File from Base64 (optional filename) |
+
 ### Tool Progress Updates
 
 Tools can emit progress events during execution:
@@ -213,13 +263,15 @@ func myTool(ctx context.Context, input string) (string, error) {
 
 AgentKit provides type aliases so consumers don't need to import eino packages directly:
 
-| Alias          | Eino Type             |
-| -------------- | --------------------- |
-| `ChatModel`    | `model.BaseChatModel` |
-| `Tool`         | `tool.BaseTool`       |
-| `ToolCall`     | `schema.ToolCall`     |
-| `ResponseMeta` | `schema.ResponseMeta` |
-| `TokenUsage`   | `schema.TokenUsage`   |
+| Alias            | Eino Type                 |
+| ---------------- | ------------------------- |
+| `ChatModel`      | `model.BaseChatModel`     |
+| `Tool`           | `tool.BaseTool`           |
+| `ToolCall`       | `schema.ToolCall`         |
+| `ResponseMeta`   | `schema.ResponseMeta`     |
+| `TokenUsage`     | `schema.TokenUsage`       |
+| `ContentPart`    | `schema.MessageInputPart` |
+| `ImageURLDetail` | `schema.ImageURLDetail`   |
 
 ## Examples
 

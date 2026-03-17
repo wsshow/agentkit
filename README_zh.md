@@ -13,6 +13,7 @@
 - **人机协作（HITL）** — 中断 Agent 执行并在用户提供数据后恢复
 - **流式输出** — 通过 Eino ADK 流式传输实时逐 token 输出
 - **推理模型支持** — 原生支持思考/推理模型（DeepSeek-R1、o1 等），流式输出推理过程
+- **多模态输入** — 通过 `Send()` 发送文本、图片、音频、视频、文件，配套简洁构造函数
 - **工具集成** — 接入任何 Eino 兼容工具，自动处理工具调用
 - **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
@@ -131,8 +132,14 @@ defer agent.Close()
 ### 核心方法
 
 ```go
-// 发送用户输入并驱动 Agent 执行（阻塞调用，并发安全）
+// 发送用户文本输入并驱动 Agent 执行（阻塞调用，并发安全）
 err := agent.Prompt(ctx, "用户消息")
+
+// 发送多模态输入（文本 + 图片、音频、视频、文件）
+err := agent.Send(ctx,
+    agentkit.Text("这张图片里是什么？"),
+    agentkit.ImageURL("https://example.com/cat.jpg"),
+)
 
 // 从当前状态恢复执行，不添加新消息（例如错误后重试）
 err := agent.Continue(ctx)
@@ -196,6 +203,49 @@ wasInterrupted, hasState, state := agentkit.GetInterruptState[MyState](ctx)
 isTarget, hasData, data := agentkit.GetResumeContext[bool](ctx)
 ```
 
+### 多模态输入
+
+`Send` 接受可变参数 `ContentPart`，通过构造函数创建：
+
+```go
+// 文本 + 图片
+agent.Send(ctx,
+    agentkit.Text("这张图片里是什么？"),
+    agentkit.ImageURL("https://example.com/cat.jpg"),
+)
+
+// 控制图片识别质量
+agent.Send(ctx,
+    agentkit.Text("请详细描述"),
+    agentkit.ImageURL("https://example.com/photo.jpg", agentkit.ImageDetailHigh),
+)
+
+// Base64 编码图片
+agent.Send(ctx,
+    agentkit.Text("识别一下"),
+    agentkit.ImageBase64(base64Data, "image/png"),
+)
+
+// 音频 / 视频 / 文件
+agent.Send(ctx, agentkit.Text("请转写"), agentkit.AudioURL("https://example.com/speech.mp3"))
+agent.Send(ctx, agentkit.Text("请总结"), agentkit.VideoURL("https://example.com/clip.mp4"))
+agent.Send(ctx, agentkit.Text("请分析"), agentkit.FileURL("https://example.com/report.pdf"))
+```
+
+可用构造函数：
+
+| 构造函数                             | 说明                      |
+| ------------------------------------ | ------------------------- |
+| `Text(s)`                            | 文本内容                  |
+| `ImageURL(url, detail...)`           | 图片 URL（可选质量参数）  |
+| `ImageBase64(data, mime, detail...)` | Base64 图片               |
+| `AudioURL(url)`                      | 音频 URL                  |
+| `AudioBase64(data, mime)`            | Base64 音频               |
+| `VideoURL(url)`                      | 视频 URL                  |
+| `VideoBase64(data, mime)`            | Base64 视频               |
+| `FileURL(url)`                       | 文件 URL                  |
+| `FileBase64(data, mime, name...)`    | Base64 文件（可选文件名） |
+
 ### 工具进度更新
 
 工具可以在执行过程中发送进度事件：
@@ -213,13 +263,15 @@ func myTool(ctx context.Context, input string) (string, error) {
 
 AgentKit 提供类型别名，消费者无需直接导入 eino 包：
 
-| 别名           | Eino 类型             |
-| -------------- | --------------------- |
-| `ChatModel`    | `model.BaseChatModel` |
-| `Tool`         | `tool.BaseTool`       |
-| `ToolCall`     | `schema.ToolCall`     |
-| `ResponseMeta` | `schema.ResponseMeta` |
-| `TokenUsage`   | `schema.TokenUsage`   |
+| 别名             | Eino 类型                 |
+| ---------------- | ------------------------- |
+| `ChatModel`      | `model.BaseChatModel`     |
+| `Tool`           | `tool.BaseTool`           |
+| `ToolCall`       | `schema.ToolCall`         |
+| `ResponseMeta`   | `schema.ResponseMeta`     |
+| `TokenUsage`     | `schema.TokenUsage`       |
+| `ContentPart`    | `schema.MessageInputPart` |
+| `ImageURLDetail` | `schema.ImageURLDetail`   |
 
 ## 示例
 
