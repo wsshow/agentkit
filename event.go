@@ -8,30 +8,33 @@ import (
 type EventType string
 
 const (
-	EventAgentStart   EventType = "agent_start"   // Agent 开始处理
-	EventTurnStart    EventType = "turn_start"    // 新一轮开始（一次 LLM 调用 + 工具执行）
-	EventMessageStart EventType = "message_start" // 消息开始（流式或非流式）
-	EventMessageDelta EventType = "message_delta" // 流式增量文本
-	EventMessageEnd   EventType = "message_end"   // 消息结束
-	EventToolStart    EventType = "tool_start"    // 工具调用请求
-	EventToolUpdate   EventType = "tool_update"   // 工具执行进度更新
-	EventToolEnd      EventType = "tool_end"      // 工具调用结果
-	EventTurnEnd      EventType = "turn_end"      // 一轮结束
-	EventTransfer     EventType = "transfer"      // Agent 转移
-	EventInterrupted  EventType = "interrupted"   // HITL 中断（等待用户输入）
-	EventAgentEnd     EventType = "agent_end"     // Agent 处理完成
-	EventError        EventType = "error"         // 错误
+	EventAgentStart     EventType = "agent_start"     // Agent 开始处理
+	EventTurnStart      EventType = "turn_start"      // 新一轮开始（一次 LLM 调用 + 工具执行）
+	EventMessageStart   EventType = "message_start"   // 消息开始（流式或非流式）
+	EventReasoningDelta EventType = "reasoning_delta" // 推理模型思考过程增量（如 DeepSeek-R1、o1）
+	EventMessageDelta   EventType = "message_delta"   // 流式增量文本
+	EventMessageEnd     EventType = "message_end"     // 消息结束
+	EventToolStart      EventType = "tool_start"      // 工具调用请求
+	EventToolUpdate     EventType = "tool_update"     // 工具执行进度更新
+	EventToolEnd        EventType = "tool_end"        // 工具调用结果
+	EventTurnEnd        EventType = "turn_end"        // 一轮结束
+	EventTransfer       EventType = "transfer"        // Agent 转移
+	EventInterrupted    EventType = "interrupted"     // HITL 中断（等待用户输入）
+	EventAgentEnd       EventType = "agent_end"       // Agent 处理完成
+	EventError          EventType = "error"           // 错误
 )
 
 // Event 统一事件
 type Event struct {
-	Type      EventType
-	Agent     string           // 产生事件的 Agent 名称
-	Content   string           // 文本内容（message_end / tool_end）
-	Delta     string           // 流式增量内容（message_delta）
-	ToolCalls []ToolCall       // 工具调用列表（tool_start）
-	Interrupt []InterruptPoint // 中断点列表（interrupted）
-	Error     error            // 错误信息（error）
+	Type             EventType
+	Agent            string           // 产生事件的 Agent 名称
+	Content          string           // 文本内容（message_end / tool_end）
+	Delta            string           // 流式增量内容（message_delta / reasoning_delta）
+	ReasoningContent string           // 完整推理内容（message_end，仅推理模型）
+	ResponseMeta     *ResponseMeta    // 响应元数据：token 用量、完成原因（message_end）
+	ToolCalls        []ToolCall       // 工具调用列表（tool_start）
+	Interrupt        []InterruptPoint // 中断点列表（interrupted）
+	Error            error            // 错误信息（error）
 }
 
 // InterruptPoint HITL 中断点信息

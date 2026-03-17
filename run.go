@@ -202,11 +202,22 @@ func (a *Agent) processMessage(agentName string, msg adk.Message) {
 		a.emtr.Emit(Event{Type: EventToolStart, Agent: agentName, ToolCalls: msg.ToolCalls})
 	}
 
-	if msg.Content != "" {
-		a.state.AddMessage(Message{Role: RoleType(msg.Role), Agent: agentName, Content: msg.Content})
+	if msg.Content != "" || msg.ReasoningContent != "" {
+		a.state.AddMessage(Message{
+			Role:             RoleType(msg.Role),
+			Agent:            agentName,
+			Content:          msg.Content,
+			ReasoningContent: msg.ReasoningContent,
+		})
 	}
 
-	a.emtr.Emit(Event{Type: EventMessageEnd, Agent: agentName, Content: msg.Content})
+	a.emtr.Emit(Event{
+		Type:             EventMessageEnd,
+		Agent:            agentName,
+		Content:          msg.Content,
+		ReasoningContent: msg.ReasoningContent,
+		ResponseMeta:     msg.ResponseMeta,
+	})
 }
 
 // processStream 处理流式消息，返回流式传输过程中的错误
@@ -217,7 +228,9 @@ func (a *Agent) processStream(ctx context.Context, agentName string, stream adk.
 	defer a.state.setStreaming(false)
 
 	var fullContent strings.Builder
+	var reasoningContent strings.Builder
 	var toolCalls []schema.ToolCall
+	var resMeta *schema.ResponseMeta
 
 	for {
 		select {
@@ -240,9 +253,18 @@ func (a *Agent) processStream(ctx context.Context, agentName string, stream adk.
 			continue
 		}
 
+		if chunk.ReasoningContent != "" {
+			reasoningContent.WriteString(chunk.ReasoningContent)
+			a.emtr.Emit(Event{Type: EventReasoningDelta, Agent: agentName, Delta: chunk.ReasoningContent})
+		}
+
 		if chunk.Content != "" {
 			fullContent.WriteString(chunk.Content)
 			a.emtr.Emit(Event{Type: EventMessageDelta, Agent: agentName, Delta: chunk.Content})
+		}
+
+		if chunk.ResponseMeta != nil {
+			resMeta = chunk.ResponseMeta
 		}
 
 		if len(chunk.ToolCalls) > 0 {
@@ -255,17 +277,32 @@ func (a *Agent) processStream(ctx context.Context, agentName string, stream adk.
 	}
 
 	content := fullContent.String()
-	if content != "" {
-		a.state.AddMessage(Message{Role: RoleAssistant, Agent: agentName, Content: content})
+	reasoning := reasoningContent.String()
+
+	if content != "" || reasoning != "" {
+		a.state.AddMessage(Message{
+			Role:             RoleAssistant,
+			Agent:            agentName,
+			Content:          content,
+			ReasoningContent: reasoning,
+		})
 	}
 
 	a.appendHistory(&schema.Message{
-		Role:      schema.Assistant,
-		Content:   content,
-		ToolCalls: toolCalls,
+		Role:             schema.Assistant,
+		Content:          content,
+		ToolCalls:        toolCalls,
+		ReasoningContent: reasoning,
+		ResponseMeta:     resMeta,
 	})
 
-	a.emtr.Emit(Event{Type: EventMessageEnd, Agent: agentName, Content: content})
+	a.emtr.Emit(Event{
+		Type:             EventMessageEnd,
+		Agent:            agentName,
+		Content:          content,
+		ReasoningContent: reasoning,
+		ResponseMeta:     resMeta,
+	})
 	return nil
 }
 

@@ -13,9 +13,10 @@ const (
 
 // Message 消息记录
 type Message struct {
-	Role    RoleType
-	Agent   string // 产生消息的 Agent 名称
-	Content string
+	Role             RoleType
+	Agent            string // 产生消息的 Agent 名称
+	Content          string
+	ReasoningContent string // 推理模型的思考内容（如 DeepSeek-R1、o1），非推理模型为空
 }
 
 // State Agent 状态管理（线程安全）
