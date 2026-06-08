@@ -13,10 +13,11 @@ import (
 )
 
 // run 外层执行，包含 steering/follow-up 队列循环
-func (a *Agent) run(ctx context.Context) error {
-	ctx = context.WithValue(context.WithValue(ctx, emitterCtxKey{}, a.emtr), agentNameCtxKey{}, a.name)
+func (a *Agent) run(ctx context.Context, inputs []Message) error {
+	ctx = a.withRunContext(ctx)
 
 	a.emtr.Emit(Event{Type: EventAgentStart, Agent: a.name})
+	a.emitInputMessages(inputs)
 
 	err := a.executeLoop(ctx)
 	err = a.processQueues(ctx, err)
@@ -33,6 +34,7 @@ func (a *Agent) processQueues(ctx context.Context, err error) error {
 				a.state.AddMessage(m)
 				a.appendHistory(schema.UserMessage(m.Content))
 			}
+			a.emitInputMessages(msgs)
 			err = a.executeLoop(ctx)
 			continue
 		}
@@ -41,6 +43,7 @@ func (a *Agent) processQueues(ctx context.Context, err error) error {
 				a.state.AddMessage(m)
 				a.appendHistory(schema.UserMessage(m.Content))
 			}
+			a.emitInputMessages(msgs)
 			err = a.executeLoop(ctx)
 			continue
 		}
@@ -63,6 +66,7 @@ func (a *Agent) executeLoop(parentCtx context.Context) error {
 		cancelOpt,
 		adk.WithCheckPointID(a.checkPointID),
 		adk.WithAfterToolCallsHook(func(ctx context.Context) error {
+			a.endTurn()
 			if a.hasSteering() {
 				cancelAgent(adk.WithAgentCancelMode(adk.CancelAfterToolCalls))
 			}
@@ -74,9 +78,19 @@ func (a *Agent) executeLoop(parentCtx context.Context) error {
 
 // executeResume 执行 HITL 恢复
 func (a *Agent) executeResume(parentCtx context.Context, targets map[string]any) error {
+	cancelOpt, cancelAgent := adk.WithCancel()
 	iter, err := a.runner.ResumeWithParams(parentCtx, a.checkPointID, &adk.ResumeParams{
 		Targets: targets,
-	})
+	},
+		cancelOpt,
+		adk.WithAfterToolCallsHook(func(ctx context.Context) error {
+			a.endTurn()
+			if a.hasSteering() {
+				cancelAgent(adk.WithAgentCancelMode(adk.CancelAfterToolCalls))
+			}
+			return nil
+		}),
+	)
 	if err != nil {
 		return err
 	}
@@ -98,7 +112,6 @@ func (a *Agent) consumeIter(parentCtx context.Context, iter *adk.AsyncIterator[*
 	}()
 
 	var lastErr error
-	a.inTurn.Store(false)
 	for {
 		select {
 		case <-ctx.Done():
@@ -159,11 +172,8 @@ func (a *Agent) processEvent(ctx context.Context, event *adk.AgentEvent) error {
 
 	if event.Output != nil && event.Output.MessageOutput != nil {
 		mo := event.Output.MessageOutput
-		// Assistant 消息标志新 turn 开始
 		if mo.Role == schema.Assistant {
-			a.endTurn()
-			a.inTurn.Store(true)
-			a.emtr.Emit(Event{Type: EventTurnStart, Agent: agentName})
+			a.beginTurn(agentName)
 		}
 		return a.processOutput(ctx, agentName, mo)
 	}
@@ -206,15 +216,25 @@ func (a *Agent) processMessage(agentName string, msg adk.Message) {
 	a.appendHistory(msg)
 
 	if msg.Role == schema.Tool {
-		a.emtr.Emit(Event{Type: EventToolEnd, Agent: agentName, Content: msg.Content})
+		toolName, arguments := a.toolCallInfo(msg.ToolCallID)
+		if msg.ToolName != "" {
+			toolName = msg.ToolName
+		}
+		a.emtr.Emit(Event{
+			Type:          EventToolEnd,
+			Agent:         agentName,
+			Content:       msg.Content,
+			ToolCallID:    msg.ToolCallID,
+			ToolName:      toolName,
+			ToolArguments: arguments,
+		})
+		a.emitMessageStart(agentName, RoleTool, msg.Content)
+		a.emitMessageEnd(agentName, RoleTool, msg.Content, "", nil)
+		a.clearToolCall(msg.ToolCallID)
 		return
 	}
 
-	a.emtr.Emit(Event{Type: EventMessageStart, Agent: agentName})
-
-	if len(msg.ToolCalls) > 0 {
-		a.emtr.Emit(Event{Type: EventToolStart, Agent: agentName, ToolCalls: msg.ToolCalls})
-	}
+	a.emitMessageStart(agentName, RoleAssistant, msg.Content)
 
 	if msg.Content != "" || msg.ReasoningContent != "" {
 		a.state.AddMessage(Message{
@@ -225,19 +245,14 @@ func (a *Agent) processMessage(agentName string, msg adk.Message) {
 		})
 	}
 
-	a.emtr.Emit(Event{
-		Type:             EventMessageEnd,
-		Agent:            agentName,
-		Content:          msg.Content,
-		ReasoningContent: msg.ReasoningContent,
-		ResponseMeta:     msg.ResponseMeta,
-	})
+	a.emitMessageEnd(agentName, RoleAssistant, msg.Content, msg.ReasoningContent, msg.ResponseMeta)
+	a.emitToolStart(agentName, msg.ToolCalls)
 }
 
 // processStream 处理流式消息，返回流式传输过程中的错误
 func (a *Agent) processStream(ctx context.Context, agentName string, stream adk.MessageStream) error {
 	a.state.setStreaming(true)
-	a.emtr.Emit(Event{Type: EventMessageStart, Agent: agentName})
+	a.emitMessageStart(agentName, RoleAssistant, "")
 
 	defer a.state.setStreaming(false)
 
@@ -286,10 +301,6 @@ func (a *Agent) processStream(ctx context.Context, agentName string, stream adk.
 		}
 	}
 
-	if len(toolCalls) > 0 {
-		a.emtr.Emit(Event{Type: EventToolStart, Agent: agentName, ToolCalls: toolCalls})
-	}
-
 	content := fullContent.String()
 	reasoning := reasoningContent.String()
 
@@ -310,13 +321,8 @@ func (a *Agent) processStream(ctx context.Context, agentName string, stream adk.
 		ResponseMeta:     resMeta,
 	})
 
-	a.emtr.Emit(Event{
-		Type:             EventMessageEnd,
-		Agent:            agentName,
-		Content:          content,
-		ReasoningContent: reasoning,
-		ResponseMeta:     resMeta,
-	})
+	a.emitMessageEnd(agentName, RoleAssistant, content, reasoning, resMeta)
+	a.emitToolStart(agentName, toolCalls)
 	return nil
 }
 

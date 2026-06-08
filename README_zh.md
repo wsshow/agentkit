@@ -80,15 +80,15 @@ func main() {
 | 事件                  | 说明                                                                        |
 | --------------------- | --------------------------------------------------------------------------- |
 | `EventAgentStart`     | Agent 开始处理                                                              |
-| `EventTurnStart`      | 新一轮开始（一次 LLM 调用 + 工具执行周期）                                  |
-| `EventMessageStart`   | 消息开始（流式或非流式）                                                    |
+| `EventTurnStart`      | 新一轮开始，发生在下一次模型请求前                                          |
+| `EventMessageStart`   | 消息开始（通过 `Event.Role` 区分用户、助手、工具消息）                      |
 | `EventReasoningDelta` | 推理/思考过程流式增量（`Event.Delta`），仅推理模型                          |
 | `EventMessageDelta`   | 流式增量文本（`Event.Delta`）                                               |
-| `EventMessageEnd`     | 消息结束（`Event.Content`、`Event.ReasoningContent`、`Event.ResponseMeta`） |
+| `EventMessageEnd`     | 消息结束（`Event.Role`、`Event.Content`、`Event.ResponseMeta`）             |
 | `EventToolStart`      | 工具调用请求（`Event.ToolCalls`）                                           |
-| `EventToolUpdate`     | 工具执行进度更新（`Event.Content`）                                         |
-| `EventToolEnd`        | 工具调用结果返回（`Event.Content`）                                         |
-| `EventTurnEnd`        | 一轮结束                                                                    |
+| `EventToolUpdate`     | 工具执行进度更新（`Event.ToolCallID`、`Event.Content`）                     |
+| `EventToolEnd`        | 工具调用结果返回（`Event.ToolCallID`、`Event.ToolName`、`Event.Content`）   |
+| `EventTurnEnd`        | 助手消息和工具结果都处理完后，一轮结束                                      |
 | `EventTransfer`       | Agent 转移（多 Agent 场景）                                                 |
 | `EventInterrupted`    | HITL 中断（`Event.Interrupt`）                                              |
 | `EventAgentEnd`       | Agent 处理完成                                                              |
@@ -100,11 +100,15 @@ func main() {
 type Event struct {
     Type             EventType
     Agent            string           // 产生事件的 Agent 名称
+    Role             RoleType         // 消息角色（message_start / message_end）
     Content          string           // 文本内容（message_end / tool_end）
     Delta            string           // 流式增量内容（message_delta / reasoning_delta）
     ReasoningContent string           // 完整推理内容（message_end，仅推理模型）
     ResponseMeta     *ResponseMeta    // 响应元数据：token 用量、完成原因（message_end）
     ToolCalls        []ToolCall       // 工具调用列表（tool_start）
+    ToolCallID       string           // 工具调用 ID（tool_update / tool_end）
+    ToolName         string           // 工具名称（tool_update / tool_end）
+    ToolArguments    string           // 工具调用参数（tool_update / tool_end）
     Interrupt        []InterruptPoint // 中断点列表（interrupted）
     Error            error            // 错误信息（error）
 }
@@ -250,7 +254,7 @@ model := agentkit.NewMockChatModel(
 ### 转向与后续消息
 
 ```go
-// 在执行期间注入转向消息（每次工具结果返回后检查）
+// 在执行期间注入转向消息（当前工具批次完成后检查）
 agent.Steer("请改为关注 X 话题")
 
 // 追加后续消息（当前任务完成后处理）

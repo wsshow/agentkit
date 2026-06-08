@@ -147,13 +147,25 @@ func TestAgentEventSequenceForTextResponse(t *testing.T) {
 		EventAgentStart,
 		EventTurnStart,
 		EventMessageStart,
+		EventMessageEnd,
+		EventMessageStart,
 		EventMessageDelta,
 		EventMessageEnd,
 		EventTurnEnd,
 		EventAgentEnd,
 	)
+	allEvents := events.Events()
+	if allEvents[2].Role != RoleUser || allEvents[2].Content != "打个招呼" {
+		t.Fatalf("user message start = %#v", allEvents[2])
+	}
+	if allEvents[3].Role != RoleUser || allEvents[3].Content != "打个招呼" {
+		t.Fatalf("user message end = %#v", allEvents[3])
+	}
+	if allEvents[4].Role != RoleAssistant {
+		t.Fatalf("assistant message start = %#v", allEvents[4])
+	}
 	end := events.Last(EventMessageEnd)
-	if end == nil || end.Agent != "assistant" || end.Content != "你好" {
+	if end == nil || end.Agent != "assistant" || end.Role != RoleAssistant || end.Content != "你好" {
 		t.Fatalf("message end event = %#v", end)
 	}
 }
@@ -275,15 +287,44 @@ func TestAgentToolEventsAndUpdates(t *testing.T) {
 		t.Fatalf("Prompt() error = %v", err)
 	}
 
+	events.RequireTypes(t,
+		EventAgentStart,
+		EventTurnStart,
+		EventMessageStart,
+		EventMessageEnd,
+		EventMessageStart,
+		EventMessageEnd,
+		EventToolStart,
+		EventToolUpdate,
+		EventToolEnd,
+		EventMessageStart,
+		EventMessageEnd,
+		EventTurnEnd,
+		EventTurnStart,
+		EventMessageStart,
+		EventMessageDelta,
+		EventMessageEnd,
+		EventTurnEnd,
+		EventAgentEnd,
+	)
+
 	toolStart := events.Last(EventToolStart)
 	if toolStart == nil || len(toolStart.ToolCalls) != 1 || toolStart.ToolCalls[0].ID != "echo_call" {
 		t.Fatalf("tool start event = %#v", toolStart)
 	}
 	if update := events.Last(EventToolUpdate); update == nil || update.Content != "正在执行" {
 		t.Fatalf("tool update event = %#v", update)
+	} else if update.ToolCallID != "echo_call" || update.ToolName != "echo" || update.ToolArguments != `{"text":"hi"}` {
+		t.Fatalf("tool update match = %#v", update)
 	}
 	if end := events.Last(EventToolEnd); end == nil || end.Content != "echo: hi" {
 		t.Fatalf("tool end event = %#v", end)
+	} else if end.ToolCallID != "echo_call" || end.ToolName != "echo" || end.ToolArguments != `{"text":"hi"}` {
+		t.Fatalf("tool end match = %#v", end)
+	}
+	toolMessageEnd := events.LastMessageEndByRole(RoleTool)
+	if toolMessageEnd == nil || toolMessageEnd.Content != "echo: hi" {
+		t.Fatalf("tool message end = %#v", toolMessageEnd)
 	}
 	if got := events.Count(EventTurnStart); got != 2 {
 		t.Fatalf("turn start count = %d, want 2", got)
@@ -839,6 +880,16 @@ func (r *mockEventRecorder) Deltas(eventType EventType) []string {
 		}
 	}
 	return out
+}
+
+func (r *mockEventRecorder) LastMessageEndByRole(role RoleType) *Event {
+	events := r.Events()
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type == EventMessageEnd && events[i].Role == role {
+			return &events[i]
+		}
+	}
+	return nil
 }
 
 func (r *mockEventRecorder) RequireTypes(t *testing.T, expected ...EventType) {

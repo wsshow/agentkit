@@ -49,7 +49,9 @@ func main() {
 		case agentkit.EventMessageDelta:
 			fmt.Print(e.Delta)
 		case agentkit.EventMessageEnd:
-			fmt.Println()
+			if e.Role == agentkit.RoleAssistant {
+				fmt.Println()
+			}
 		case agentkit.EventError:
 			fmt.Printf("[错误] %v\n", e.Error)
 		}

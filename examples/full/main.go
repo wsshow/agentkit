@@ -131,13 +131,17 @@ func subscribe(agent *agentkit.Agent) {
 		case agentkit.EventTurnStart:
 			fmt.Printf("%s│ ▶ 新一轮%s\n", colorCyan, colorReset)
 		case agentkit.EventMessageStart:
-			fmt.Printf("%s│ 💬 %s", colorBlue, colorReset)
+			if e.Role == agentkit.RoleAssistant {
+				fmt.Printf("%s│ 💬 %s", colorBlue, colorReset)
+			}
 		case agentkit.EventReasoningDelta:
 			fmt.Printf("%s%s%s", colorGray, e.Delta, colorReset)
 		case agentkit.EventMessageDelta:
 			fmt.Print(e.Delta)
 		case agentkit.EventMessageEnd:
-			fmt.Println()
+			if e.Role == agentkit.RoleAssistant {
+				fmt.Println()
+			}
 		case agentkit.EventToolStart:
 			names := make([]string, len(e.ToolCalls))
 			for i, tc := range e.ToolCalls {

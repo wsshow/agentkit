@@ -80,15 +80,15 @@ func main() {
 | Event                 | Description                                                                        |
 | --------------------- | ---------------------------------------------------------------------------------- |
 | `EventAgentStart`     | Agent begins processing                                                            |
-| `EventTurnStart`      | New turn starts (one LLM call + tool execution cycle)                              |
-| `EventMessageStart`   | Message begins (streaming or non-streaming)                                        |
+| `EventTurnStart`      | New turn starts before the next model request                                      |
+| `EventMessageStart`   | Message begins (`Event.Role` identifies user, assistant, or tool)                  |
 | `EventReasoningDelta` | Reasoning/thinking stream delta (`Event.Delta`), for reasoning models              |
 | `EventMessageDelta`   | Incremental streaming text (`Event.Delta`)                                         |
-| `EventMessageEnd`     | Message complete (`Event.Content`, `Event.ReasoningContent`, `Event.ResponseMeta`) |
+| `EventMessageEnd`     | Message complete (`Event.Role`, `Event.Content`, `Event.ResponseMeta`)             |
 | `EventToolStart`      | Tool call requested (`Event.ToolCalls`)                                            |
-| `EventToolUpdate`     | Tool execution progress update (`Event.Content`)                                   |
-| `EventToolEnd`        | Tool call result returned (`Event.Content`)                                        |
-| `EventTurnEnd`        | Turn complete                                                                      |
+| `EventToolUpdate`     | Tool execution progress update (`Event.ToolCallID`, `Event.Content`)               |
+| `EventToolEnd`        | Tool call result returned (`Event.ToolCallID`, `Event.ToolName`, `Event.Content`)  |
+| `EventTurnEnd`        | Turn complete after the assistant message and tool results                         |
 | `EventTransfer`       | Agent transfer (multi-agent)                                                       |
 | `EventInterrupted`    | HITL interrupt (`Event.Interrupt`)                                                 |
 | `EventAgentEnd`       | Agent processing complete                                                          |
@@ -100,11 +100,15 @@ func main() {
 type Event struct {
     Type             EventType
     Agent            string           // source agent name
+    Role             RoleType         // message role (message_start / message_end)
     Content          string           // full text (message_end / tool_end)
     Delta            string           // streaming delta (message_delta / reasoning_delta)
     ReasoningContent string           // full reasoning content (message_end, reasoning models only)
     ResponseMeta     *ResponseMeta    // token usage, finish reason (message_end)
     ToolCalls        []ToolCall       // tool call list (tool_start)
+    ToolCallID       string           // tool call ID (tool_update / tool_end)
+    ToolName         string           // tool name (tool_update / tool_end)
+    ToolArguments    string           // tool arguments (tool_update / tool_end)
     Interrupt        []InterruptPoint // interrupt points (interrupted)
     Error            error            // error details (error)
 }
@@ -250,7 +254,7 @@ model := agentkit.NewMockChatModel(
 ### Steering & Follow-Up
 
 ```go
-// Inject a steering message during execution (checked after each tool result)
+// Inject a steering message during execution (checked after the current tool batch)
 agent.Steer("Please focus on topic X instead")
 
 // Append a follow-up message (processed after current task completes)

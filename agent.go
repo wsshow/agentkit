@@ -22,6 +22,7 @@ const (
 
 type emitterCtxKey struct{}
 type agentNameCtxKey struct{}
+type agentCtxKey struct{}
 
 // EmitToolUpdate 在工具执行中发送进度更新事件。
 // 工具通过 context 获取 Emitter 并发送 tool_update 事件：
@@ -33,8 +34,20 @@ type agentNameCtxKey struct{}
 func EmitToolUpdate(ctx context.Context, content string) {
 	e, _ := ctx.Value(emitterCtxKey{}).(*emitter)
 	name, _ := ctx.Value(agentNameCtxKey{}).(string)
+	callID := compose.GetToolCallID(ctx)
+	toolName, arguments := "", ""
+	if a, _ := ctx.Value(agentCtxKey{}).(*Agent); a != nil {
+		toolName, arguments = a.toolCallInfo(callID)
+	}
 	if e != nil {
-		e.Emit(Event{Type: EventToolUpdate, Agent: name, Content: content})
+		e.Emit(Event{
+			Type:          EventToolUpdate,
+			Agent:         name,
+			Content:       content,
+			ToolCallID:    callID,
+			ToolName:      toolName,
+			ToolArguments: arguments,
+		})
 	}
 }
 
@@ -71,6 +84,12 @@ type Agent struct {
 	followUpQueue []Message
 	steeringMode  QueueMode
 	followUpMode  QueueMode
+	toolCalls     map[string]toolCallInfo
+}
+
+type toolCallInfo struct {
+	name      string
+	arguments string
 }
 
 // New 创建 Agent
@@ -85,13 +104,30 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		desc = cfg.Name
 	}
 
+	a := &Agent{
+		name:         cfg.Name,
+		state:        newState(),
+		emtr:         newEmitter(),
+		checkPointID: cfg.Name + "/" + uuid.New().String(),
+		steeringMode: QueueModeOneAtATime,
+		followUpMode: QueueModeOneAtATime,
+		toolCalls:    make(map[string]toolCallInfo),
+	}
+
+	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+1)
+	handlers = append(handlers, cfg.Handlers...)
+	handlers = append(handlers, &agentLifecycleHandler{
+		BaseChatModelAgentMiddleware: &BaseChatModelAgentMiddleware{},
+		agent:                        a,
+	})
+
 	agentCfg := &adk.ChatModelAgentConfig{
 		Name:                cfg.Name,
 		Description:         desc,
 		Instruction:         cfg.SystemPrompt,
 		Model:               cfg.Model,
 		MaxIterations:       maxIter,
-		Handlers:            cfg.Handlers,
+		Handlers:            handlers,
 		ModelRetryConfig:    cfg.ModelRetryConfig,
 		ModelFailoverConfig: cfg.ModelFailoverConfig,
 	}
@@ -120,15 +156,8 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		CheckPointStore: store,
 	})
 
-	return &Agent{
-		name:         cfg.Name,
-		runner:       runner,
-		state:        newState(),
-		emtr:         newEmitter(),
-		checkPointID: cfg.Name + "/" + uuid.New().String(),
-		steeringMode: QueueModeOneAtATime,
-		followUpMode: QueueModeOneAtATime,
-	}, nil
+	a.runner = runner
+	return a, nil
 }
 
 // Prompt 发送用户输入并驱动 Agent 执行，事件通过 Subscribe 订阅。
@@ -141,7 +170,7 @@ func (a *Agent) Prompt(ctx context.Context, input string) error {
 
 	a.state.AddMessage(Message{Role: RoleUser, Content: input})
 	a.appendHistory(schema.UserMessage(input))
-	return a.run(ctx)
+	return a.run(ctx, []Message{{Role: RoleUser, Content: input}})
 }
 
 // Send 发送多模态内容并驱动 Agent 执行。
@@ -165,7 +194,7 @@ func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
 		Role:                  schema.User,
 		UserInputMultiContent: parts,
 	})
-	return a.run(ctx)
+	return a.run(ctx, []Message{{Role: RoleUser, Content: textContent}})
 }
 
 // Continue 从当前状态恢复执行（不添加新消息），用于错误后重试。
@@ -190,11 +219,11 @@ func (a *Agent) Continue(ctx context.Context) error {
 	if lastRole == schema.Assistant {
 		return errors.New("cannot continue from assistant message, last message must be user or tool result")
 	}
-	return a.run(ctx)
+	return a.run(ctx, nil)
 }
 
 // Steer 在 Agent 执行期间插入转向消息。
-// 工具结果返回后检查队列，若有消息则中断当前执行并注入新消息。
+// 当前工具批次完成后检查队列，若有消息则中断当前执行并注入新消息。
 func (a *Agent) Steer(content string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -292,7 +321,7 @@ func (a *Agent) Resume(ctx context.Context, targets map[string]any) error {
 	}
 	defer a.endRun()
 
-	ctx = context.WithValue(context.WithValue(ctx, emitterCtxKey{}, a.emtr), agentNameCtxKey{}, a.name)
+	ctx = a.withRunContext(ctx)
 
 	a.emtr.Emit(Event{Type: EventAgentStart, Agent: a.name})
 
