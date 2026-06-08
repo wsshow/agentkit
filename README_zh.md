@@ -169,6 +169,84 @@ agent.Close()
 
 > `Prompt`、`Continue`、`Resume` 互斥执行 — 在另一个正在运行时调用会返回错误。
 
+### 集成测试
+
+使用 `MockChatModel` 运行 Agent，无需调用真实模型：
+
+```go
+model := agentkit.NewMockChatModel(
+    agentkit.MockModelStream("你", "好"),
+)
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "test-agent",
+    Model: model,
+})
+if err != nil {
+    t.Fatal(err)
+}
+defer agent.Close()
+
+if err := agent.Prompt(ctx, "打个招呼"); err != nil {
+    t.Fatal(err)
+}
+
+calls := model.Calls()
+if calls[0].Input[len(calls[0].Input)-1].Content != "打个招呼" {
+    t.Fatal("unexpected input")
+}
+```
+
+常用响应辅助函数：
+
+```go
+agentkit.MockModelText("完成")
+agentkit.MockModelStream("第 1 段", "第 2 段")
+agentkit.MockModelError(err)
+agentkit.MockModelStreamError(err, "部分内容")
+```
+
+工具调用可以直接执行真实函数：
+
+```go
+weather := agentkit.MustMockTool(
+    "get_weather",
+    "查询天气",
+    func(ctx context.Context, input *WeatherInput) (*WeatherOutput, error) {
+        return &WeatherOutput{City: input.City, Condition: "晴"}, nil
+    },
+)
+
+beijing := weather.Call("beijing_weather", &WeatherInput{City: "北京"})
+shanghai := weather.Call("shanghai_weather", &WeatherInput{City: "上海"})
+
+model := agentkit.NewMockChatModel(
+    agentkit.MockModelCalls(beijing),
+    agentkit.MockModelCallsAfter(beijing, shanghai),
+    agentkit.MockModelRespondsAfter(shanghai, func(out *WeatherOutput) agentkit.MockModelResponse {
+        return agentkit.MockModelText(out.City + out.Condition)
+    }),
+)
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "test-agent",
+    Model: model,
+    Tools: agentkit.MockTools(weather),
+})
+```
+
+如果一次模型回复里要调用多个工具，可以使用 `MockModelCalls`：
+
+```go
+beijing := weather.Call("beijing_weather", &WeatherInput{City: "北京"})
+shanghai := weather.Call("shanghai_weather", &WeatherInput{City: "上海"})
+
+model := agentkit.NewMockChatModel(
+    agentkit.MockModelCalls(beijing, shanghai),
+    agentkit.MockModelTextAfterAll("完成", beijing, shanghai),
+)
+```
+
 ### 转向与后续消息
 
 ```go

@@ -169,6 +169,84 @@ agent.Close()
 
 > `Prompt`, `Continue`, and `Resume` are mutually exclusive — calling one while another is running returns an error.
 
+### Integration Tests
+
+Use `MockChatModel` to run agents without calling a real model:
+
+```go
+model := agentkit.NewMockChatModel(
+    agentkit.MockModelStream("hel", "lo"),
+)
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "test-agent",
+    Model: model,
+})
+if err != nil {
+    t.Fatal(err)
+}
+defer agent.Close()
+
+if err := agent.Prompt(ctx, "say hello"); err != nil {
+    t.Fatal(err)
+}
+
+calls := model.Calls()
+if calls[0].Input[len(calls[0].Input)-1].Content != "say hello" {
+    t.Fatal("unexpected input")
+}
+```
+
+Common response helpers:
+
+```go
+agentkit.MockModelText("done")
+agentkit.MockModelStream("part 1", "part 2")
+agentkit.MockModelError(err)
+agentkit.MockModelStreamError(err, "partial")
+```
+
+Tool calls can execute real functions:
+
+```go
+weather := agentkit.MustMockTool(
+    "get_weather",
+    "query weather",
+    func(ctx context.Context, input *WeatherInput) (*WeatherOutput, error) {
+        return &WeatherOutput{City: input.City, Condition: "sunny"}, nil
+    },
+)
+
+beijing := weather.Call("beijing_weather", &WeatherInput{City: "Beijing"})
+shanghai := weather.Call("shanghai_weather", &WeatherInput{City: "Shanghai"})
+
+model := agentkit.NewMockChatModel(
+    agentkit.MockModelCalls(beijing),
+    agentkit.MockModelCallsAfter(beijing, shanghai),
+    agentkit.MockModelRespondsAfter(shanghai, func(out *WeatherOutput) agentkit.MockModelResponse {
+        return agentkit.MockModelText(out.City + " is " + out.Condition)
+    }),
+)
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "test-agent",
+    Model: model,
+    Tools: agentkit.MockTools(weather),
+})
+```
+
+Use `MockModelCalls` when one model response calls multiple tools:
+
+```go
+beijing := weather.Call("beijing_weather", &WeatherInput{City: "Beijing"})
+shanghai := weather.Call("shanghai_weather", &WeatherInput{City: "Shanghai"})
+
+model := agentkit.NewMockChatModel(
+    agentkit.MockModelCalls(beijing, shanghai),
+    agentkit.MockModelTextAfterAll("done", beijing, shanghai),
+)
+```
+
 ### Steering & Follow-Up
 
 ```go
