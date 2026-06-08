@@ -121,8 +121,9 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     SystemPrompt:    "System instructions",
     Model:           chatModel,                          // agentkit.ChatModel
     Tools:           []agentkit.Tool{myTool},             // optional
-    Middlewares:      []adk.AgentMiddleware{},             // agent-level hooks (optional)
-    ModelMiddlewares: []adk.ChatModelAgentMiddleware{},    // model-level hooks (optional)
+    Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // optional
+    ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // optional
+    ModelFailoverConfig: failoverConfig,                              // optional
     MaxIterations:   20,                                  // max LLM call cycles (default: 20)
     CheckPointStore: store,                               // checkpoint store (optional)
 })
@@ -156,7 +157,7 @@ agent.Abort()
 // Reset agent state (waits for completion, then clears history and queues)
 agent.Reset()
 
-// Get full conversation history (eino schema.Message, for debugging/persistence)
+// Get full conversation history for debugging or persistence
 history := agent.History()
 
 // Get agent state (message records, streaming status)

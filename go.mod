@@ -3,7 +3,7 @@ module github.com/wsshow/agentkit
 go 1.25.3
 
 require (
-	github.com/cloudwego/eino v0.8.2
+	github.com/cloudwego/eino v0.9.4
 	github.com/google/uuid v1.6.0
 )
 
@@ -34,6 +34,6 @@ require (
 	golang.org/x/arch v0.11.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/sys v0.29.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

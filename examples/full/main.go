@@ -193,7 +193,7 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	// 使用 agentkit.Tool 别名，无需导入 eino/components/tool
+	// 创建工具列表
 	agent, err := agentkit.New(ctx, &agentkit.Config{
 		Name:         "weather-assistant",
 		Description:  "天气查询与操作助手",
@@ -278,7 +278,7 @@ func main() {
 		fmt.Printf("%s   [%d] role=%s agent=%s: %s%s\n", colorGray, i, m.Role, m.Agent, truncate(m.Content, 30), colorReset)
 	}
 
-	// History()：完整 eino schema.Message（含 tool_calls、role 等）
+	// History()：完整消息历史（含 tool_calls、role 等）
 	history := agent.History()
 	fmt.Printf("\n%s📜 History() 共 %d 条（含 tool/assistant 完整消息）:%s\n", colorCyan, len(history), colorReset)
 	for i, m := range history {

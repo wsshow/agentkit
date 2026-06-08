@@ -121,8 +121,9 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     SystemPrompt:    "系统指令",
     Model:           chatModel,                          // agentkit.ChatModel
     Tools:           []agentkit.Tool{myTool},             // 可选
-    Middlewares:      []adk.AgentMiddleware{},             // Agent 级别钩子（可选）
-    ModelMiddlewares: []adk.ChatModelAgentMiddleware{},    // 模型级别钩子（可选）
+    Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // 可选
+    ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // 可选
+    ModelFailoverConfig: failoverConfig,                              // 可选
     MaxIterations:   20,                                  // 最大 LLM 调用轮次（默认 20）
     CheckPointStore: store,                               // 检查点存储（可选）
 })
@@ -156,7 +157,7 @@ agent.Abort()
 // 重置 Agent 状态（等待完成后清空历史和队列）
 agent.Reset()
 
-// 获取完整对话历史（eino schema.Message，用于调试/持久化）
+// 获取完整对话历史，用于调试或持久化
 history := agent.History()
 
 // 获取 Agent 状态（消息记录、流式状态）

@@ -40,18 +40,19 @@ func EmitToolUpdate(ctx context.Context, content string) {
 
 // Config Agent 配置
 type Config struct {
-	Name             string
-	Description      string
-	SystemPrompt     string
-	Model            ChatModel                      // 聊天模型（可直接使用 agentkit.ChatModel 别名）
-	Tools            []Tool                         // 工具列表（可直接使用 agentkit.Tool 别名）
-	Middlewares      []adk.AgentMiddleware          // Agent 级中间件：结构体式钩子（BeforeChatModel/AfterChatModel）和工具调用包装 WrapToolCall（高级）
-	ModelMiddlewares []adk.ChatModelAgentMiddleware // 模型级处理器：接口式扩展（WrapModel/WrapToolCall）和状态重写（BeforeModelRewriteState/AfterModelRewriteState），在 Middlewares 之后执行（高级）
-	MaxIterations    int                            // 默认 20
-	CheckPointStore  compose.CheckPointStore        // 自定义 CheckPoint 存储，默认使用内存存储
+	Name                string
+	Description         string
+	SystemPrompt        string
+	Model               ChatModel                  // 聊天模型（可直接使用 agentkit.ChatModel 别名）
+	Tools               []Tool                     // 工具列表（可直接使用 agentkit.Tool 别名）
+	Handlers            []ChatModelAgentMiddleware // ChatModelAgent 扩展处理器
+	ModelRetryConfig    *ModelRetryConfig          // 模型调用重试配置（可选）
+	ModelFailoverConfig *ModelFailoverConfig       // 模型失败转移配置（可选）
+	MaxIterations       int                        // 默认 20
+	CheckPointStore     compose.CheckPointStore    // 自定义 CheckPoint 存储，默认使用内存存储
 }
 
-// Agent 独立的轻量级 Agent，封装 eino ADK，提供事件流驱动的交互
+// Agent 提供事件流驱动的交互能力。
 type Agent struct {
 	name         string
 	runner       *adk.Runner
@@ -85,13 +86,14 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 
 	agentCfg := &adk.ChatModelAgentConfig{
-		Name:          cfg.Name,
-		Description:   desc,
-		Instruction:   cfg.SystemPrompt,
-		Model:         cfg.Model,
-		MaxIterations: maxIter,
-		Middlewares:   cfg.Middlewares,
-		Handlers:      cfg.ModelMiddlewares,
+		Name:                cfg.Name,
+		Description:         desc,
+		Instruction:         cfg.SystemPrompt,
+		Model:               cfg.Model,
+		MaxIterations:       maxIter,
+		Handlers:            cfg.Handlers,
+		ModelRetryConfig:    cfg.ModelRetryConfig,
+		ModelFailoverConfig: cfg.ModelFailoverConfig,
 	}
 
 	if len(cfg.Tools) > 0 {

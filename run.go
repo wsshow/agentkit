@@ -130,7 +130,7 @@ func (a *Agent) hasSteering() bool {
 	return len(a.steeringQueue) > 0
 }
 
-// processEvent 处理 eino AgentEvent 并转换为 agentkit Event
+// processEvent 将底层事件转换为统一事件。
 func (a *Agent) processEvent(ctx context.Context, event *adk.AgentEvent) error {
 	agentName := event.AgentName
 

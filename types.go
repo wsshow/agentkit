@@ -1,6 +1,7 @@
 package agentkit
 
 import (
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -11,6 +12,18 @@ type ChatModel = model.BaseChatModel
 
 // Tool 基础工具接口
 type Tool = tool.BaseTool
+
+// ChatModelAgentMiddleware 是 ChatModelAgent 扩展接口。
+type ChatModelAgentMiddleware = adk.ChatModelAgentMiddleware
+
+// BaseChatModelAgentMiddleware 提供 ChatModelAgentMiddleware 的默认空实现。
+type BaseChatModelAgentMiddleware = adk.BaseChatModelAgentMiddleware
+
+// ModelRetryConfig 配置 ChatModel 调用重试策略。
+type ModelRetryConfig = adk.ModelRetryConfig
+
+// ModelFailoverConfig 配置 ChatModel 失败转移策略。
+type ModelFailoverConfig = adk.ModelFailoverConfig[*schema.Message]
 
 // ToolCall 工具调用信息
 type ToolCall = schema.ToolCall
