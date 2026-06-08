@@ -125,6 +125,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     SystemPrompt:    "System instructions",
     Model:           chatModel,                          // agentkit.ChatModel
     Tools:           []agentkit.Tool{myTool},             // optional
+    History:         savedHistory,                        // optional
     Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // optional
     ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // optional
     ModelFailoverConfig: failoverConfig,                              // optional
@@ -161,8 +162,11 @@ agent.Abort()
 // Reset agent state (waits for completion, then clears history and queues)
 agent.Reset()
 
-// Get full conversation history for debugging or persistence
+// Get full conversation history for debugging or persistence (returns a copy)
 history := agent.History()
+
+// Replace full conversation history and sync display state
+agent.SetHistory(history)
 
 // Get agent state (message records, streaming status)
 state := agent.State()

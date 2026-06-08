@@ -58,6 +58,7 @@ type Config struct {
 	SystemPrompt        string
 	Model               ChatModel                  // 聊天模型（可直接使用 agentkit.ChatModel 别名）
 	Tools               []Tool                     // 工具列表（可直接使用 agentkit.Tool 别名）
+	History             []*schema.Message          // 完整对话历史（可选）
 	Handlers            []ChatModelAgentMiddleware // ChatModelAgent 扩展处理器
 	ModelRetryConfig    *ModelRetryConfig          // 模型调用重试配置（可选）
 	ModelFailoverConfig *ModelFailoverConfig       // 模型失败转移配置（可选）
@@ -113,6 +114,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		followUpMode: QueueModeOneAtATime,
 		toolCalls:    make(map[string]toolCallInfo),
 	}
+	a.replaceHistory(cfg.History)
 
 	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+1)
 	handlers = append(handlers, cfg.Handlers...)
@@ -372,9 +374,13 @@ func (a *Agent) Name() string {
 func (a *Agent) History() []*schema.Message {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	out := make([]*schema.Message, len(a.history))
-	copy(out, a.history)
-	return out
+	return cloneHistoryMessages(a.history)
+}
+
+// SetHistory 替换完整对话历史，并同步展示状态。
+func (a *Agent) SetHistory(history []*schema.Message) {
+	a.Abort()
+	a.replaceHistory(history)
 }
 
 // Reset 重置 Agent 状态（清空消息历史和队列）。
@@ -387,6 +393,7 @@ func (a *Agent) Reset() {
 	a.history = nil
 	a.steeringQueue = nil
 	a.followUpQueue = nil
+	a.toolCalls = make(map[string]toolCallInfo)
 }
 
 // startRun 标记 Agent 开始执行。如果已在执行中，返回错误。

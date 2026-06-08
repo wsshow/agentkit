@@ -125,6 +125,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     SystemPrompt:    "系统指令",
     Model:           chatModel,                          // agentkit.ChatModel
     Tools:           []agentkit.Tool{myTool},             // 可选
+    History:         savedHistory,                        // 可选
     Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // 可选
     ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // 可选
     ModelFailoverConfig: failoverConfig,                              // 可选
@@ -161,8 +162,11 @@ agent.Abort()
 // 重置 Agent 状态（等待完成后清空历史和队列）
 agent.Reset()
 
-// 获取完整对话历史，用于调试或持久化
+// 获取完整对话历史，用于调试或持久化（返回副本）
 history := agent.History()
+
+// 替换完整对话历史，并同步展示状态
+agent.SetHistory(history)
 
 // 获取 Agent 状态（消息记录、流式状态）
 state := agent.State()

@@ -712,6 +712,117 @@ func TestAgentFollowUpQueueAllModeBatchesMessages(t *testing.T) {
 	}
 }
 
+func TestAgentConfigHistoryRestoresModelInputAndState(t *testing.T) {
+	ctx := context.Background()
+	history := []*schema.Message{
+		schema.UserMessage("之前的问题"),
+		schema.AssistantMessage("之前的回答", nil),
+		schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "weather_call",
+			Function: schema.FunctionCall{
+				Name:      "weather",
+				Arguments: `{"city":"北京"}`,
+			},
+		}}),
+		schema.ToolMessage("北京晴", "weather_call", schema.WithToolName("weather")),
+	}
+	model := NewMockChatModel(MockExpect(MockModelText("继续回答"), func(call MockModelCall) error {
+		if got := userMessageContents(call.Input); strings.Join(got, "|") != "之前的问题|继续" {
+			return fmt.Errorf("user messages = %v", got)
+		}
+		if !inputHasToolResult(call.Input, "weather_call") {
+			return errors.New("missing restored tool result")
+		}
+		return nil
+	}))
+	agent, err := New(ctx, &Config{
+		Name:    "assistant",
+		Model:   model,
+		History: history,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	if got := messageContents(agent.State().Messages()); strings.Join(got, "|") != "之前的问题|之前的回答" {
+		t.Fatalf("restored state messages = %#v", agent.State().Messages())
+	}
+
+	history[0].Content = "外部修改"
+	if err := agent.Prompt(ctx, "继续"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+	if got := firstMessageContentByRole(agent.History(), schema.User); got != "之前的问题" {
+		t.Fatalf("history was modified through source slice: %q", got)
+	}
+}
+
+func TestAgentSetHistoryReplacesHistoryAndState(t *testing.T) {
+	ctx := context.Background()
+	model := NewMockChatModel(
+		MockModelText("旧回答"),
+		MockExpect(MockModelText("新回答"), func(call MockModelCall) error {
+			if got := userMessageContents(call.Input); strings.Join(got, "|") != "新问题|继续" {
+				return fmt.Errorf("user messages = %v", got)
+			}
+			if firstMessageContentByRole(call.Input, schema.Assistant) != "新回答前文" {
+				return errors.New("missing restored assistant message")
+			}
+			return nil
+		}),
+	)
+	agent, err := New(ctx, &Config{Name: "assistant", Model: model})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	if err := agent.Prompt(ctx, "旧问题"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	agent.SetHistory([]*schema.Message{
+		schema.UserMessage("新问题"),
+		schema.AssistantMessage("新回答前文", nil),
+	})
+	if got := messageContents(agent.State().Messages()); strings.Join(got, "|") != "新问题|新回答前文" {
+		t.Fatalf("state messages after SetHistory = %#v", agent.State().Messages())
+	}
+
+	if err := agent.Prompt(ctx, "继续"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+}
+
+func TestAgentHistoryReturnsCopy(t *testing.T) {
+	ctx := context.Background()
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: NewMockChatModel(MockModelText("回答")),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	if err := agent.Prompt(ctx, "问题"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	history := agent.History()
+	history[0].Content = "外部修改"
+	history = append(history, schema.UserMessage("额外消息"))
+
+	got := agent.History()
+	if len(got) != 2 {
+		t.Fatalf("history length = %d, want 2", len(got))
+	}
+	if got[0].Content != "问题" {
+		t.Fatalf("history content = %q, want %q", got[0].Content, "问题")
+	}
+}
+
 func TestAgentRunningRejectsConcurrentPrompt(t *testing.T) {
 	ctx := context.Background()
 	started := make(chan struct{})

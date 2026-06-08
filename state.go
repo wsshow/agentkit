@@ -37,6 +37,13 @@ func (s *State) AddMessage(msg Message) {
 	s.messages = append(s.messages, msg)
 }
 
+func (s *State) replaceMessages(messages []Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = append([]Message(nil), messages...)
+	s.streaming = false
+}
+
 // Messages 获取所有消息的副本
 func (s *State) Messages() []Message {
 	s.mu.RLock()
