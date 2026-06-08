@@ -3,29 +3,16 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"os"
 
-	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/joho/godotenv"
 	"github.com/wsshow/agentkit"
+	"github.com/wsshow/agentkit/examples/internal/demo"
 )
 
 func main() {
 	ctx := context.Background()
 
-	// 加载环境变量
-	if err := godotenv.Load(); err != nil {
-		log.Fatalln(err)
-	}
-
-	// 创建聊天模型
-	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		APIKey:  os.Getenv("FEIKONG_OPENAI_API_KEY"),
-		BaseURL: os.Getenv("FEIKONG_OPENAI_BASE_URL"),
-		Model:   os.Getenv("FEIKONG_OPENAI_MODEL"),
-	})
+	chatModel, err := demo.NewChatModel(ctx)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -41,21 +28,7 @@ func main() {
 	}
 	defer agent.Close()
 
-	// 订阅事件：只处理流式输出和错误
-	agent.Subscribe(func(e agentkit.Event) {
-		switch e.Type {
-		case agentkit.EventReasoningDelta:
-			fmt.Print(e.Delta)
-		case agentkit.EventMessageDelta:
-			fmt.Print(e.Delta)
-		case agentkit.EventMessageEnd:
-			if e.Role == agentkit.RoleAssistant {
-				fmt.Println()
-			}
-		case agentkit.EventError:
-			fmt.Printf("[错误] %v\n", e.Error)
-		}
-	})
+	demo.SubscribeText(agent)
 
 	// 多轮对话
 	questions := []string{
@@ -65,8 +38,7 @@ func main() {
 	}
 
 	for _, q := range questions {
-		fmt.Printf("\n用户: %s\n助手: ", q)
-		if err := agent.Prompt(ctx, q); err != nil {
+		if err := demo.Ask(ctx, agent, q); err != nil {
 			log.Fatalln(err)
 		}
 	}

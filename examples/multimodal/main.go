@@ -7,23 +7,14 @@ import (
 	"log"
 	"os"
 
-	"github.com/cloudwego/eino-ext/components/model/openai"
-	"github.com/joho/godotenv"
 	"github.com/wsshow/agentkit"
+	"github.com/wsshow/agentkit/examples/internal/demo"
 )
 
 func main() {
 	ctx := context.Background()
 
-	if err := godotenv.Load(); err != nil {
-		log.Fatalln(err)
-	}
-
-	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		APIKey:  os.Getenv("FEIKONG_OPENAI_API_KEY"),
-		BaseURL: os.Getenv("FEIKONG_OPENAI_BASE_URL"),
-		Model:   os.Getenv("FEIKONG_OPENAI_MODEL"),
-	})
+	chatModel, err := demo.NewChatModel(ctx)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -38,18 +29,7 @@ func main() {
 	}
 	defer agent.Close()
 
-	agent.Subscribe(func(e agentkit.Event) {
-		switch e.Type {
-		case agentkit.EventReasoningDelta:
-			fmt.Print(e.Delta)
-		case agentkit.EventMessageDelta:
-			fmt.Print(e.Delta)
-		case agentkit.EventMessageEnd:
-			fmt.Println()
-		case agentkit.EventError:
-			fmt.Printf("[错误] %v\n", e.Error)
-		}
-	})
+	demo.SubscribeText(agent)
 
 	// ── 场景 1：文本 + 图片 URL ──────────────────────────────────────────────
 	// 注意：必须使用图片的直链（返回图片二进制），不能使用 HTML 页面链接。
@@ -84,9 +64,8 @@ func main() {
 
 	// ── 场景 3：追问（纯文本，依赖上下文） ───────────────────────────────────
 	fmt.Println("\n═══ 场景 3：追问（纯文本，依赖上下文） ═══")
-	fmt.Print("\n用户: 你刚才看到的图片是关于什么主题的？\n助手: ")
 
-	if err := agent.Prompt(ctx, "你刚才看到的图片是关于什么主题的？"); err != nil {
+	if err := demo.Ask(ctx, agent, "你刚才看到的图片是关于什么主题的？"); err != nil {
 		log.Fatalln(err)
 	}
 }

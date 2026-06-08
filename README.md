@@ -365,7 +365,11 @@ AgentKit provides type aliases so consumers don't need to import eino packages d
 See the [examples](examples/) directory:
 
 - **[simple](examples/simple/)** — Minimal multi-turn conversation (~60 lines)
-- **[full](examples/full/)** — Comprehensive 7-scenario demo (tools, history, reset, follow-up, steer, HITL, state inspection)
+- **[tools](examples/tools/)** — Tool calls with progress events
+- **[history](examples/history/)** — Export and restore conversation history
+- **[queues](examples/queues/)** — Follow-up and steering queues
+- **[hitl](examples/hitl/)** — Human-in-the-loop interrupt and resume
+- **[multimodal](examples/multimodal/)** — Text and image inputs
 
 ## License
 

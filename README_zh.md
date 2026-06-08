@@ -365,7 +365,11 @@ AgentKit 提供类型别名，消费者无需直接导入 eino 包：
 查看 [examples](examples/) 目录：
 
 - **[simple](examples/simple/)** — 最简多轮对话（~60 行）
-- **[full](examples/full/)** — 综合 7 场景演示（工具调用、历史上下文、重置、后续消息、转向、HITL、状态检查）
+- **[tools](examples/tools/)** — 工具调用和进度事件
+- **[history](examples/history/)** — 导出并恢复对话历史
+- **[queues](examples/queues/)** — 后续消息和转向队列
+- **[hitl](examples/hitl/)** — 人机协作中断和恢复
+- **[multimodal](examples/multimodal/)** — 文本和图片输入
 
 ## 许可证
 
