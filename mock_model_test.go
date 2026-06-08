@@ -3,8 +3,11 @@ package agentkit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
@@ -46,6 +49,49 @@ func TestMockChatModelTextResponse(t *testing.T) {
 	}
 }
 
+func TestMockChatModelWithSystemPrompt(t *testing.T) {
+	ctx := context.Background()
+	chatModel := NewMockChatModel(MockExpect(MockModelText("好的，我来帮你。"), func(call MockModelCall) error {
+		if got := firstMessageContentByRole(call.Input, schema.System); got != "你是一个有用的助手。" {
+			return fmt.Errorf("system prompt = %q, want %q", got, "你是一个有用的助手。")
+		}
+		if got := lastMessageContentByRole(call.Input, schema.User); got != "帮我总结一下" {
+			return fmt.Errorf("user input = %q, want %q", got, "帮我总结一下")
+		}
+		return nil
+	}))
+
+	agent, err := New(ctx, &Config{
+		Name:         "assistant",
+		SystemPrompt: "你是一个有用的助手。",
+		Model:        chatModel,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	if err := agent.Prompt(ctx, "帮我总结一下"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	messages := agent.State().Messages()
+	if len(messages) != 2 {
+		t.Fatalf("messages length = %d, want 2", len(messages))
+	}
+	if messages[0].Role != RoleUser || messages[0].Content != "帮我总结一下" {
+		t.Fatalf("user message = %#v", messages[0])
+	}
+	if messages[1].Role != RoleAssistant || messages[1].Agent != "assistant" || messages[1].Content != "好的，我来帮你。" {
+		t.Fatalf("assistant message = %#v", messages[1])
+	}
+
+	calls := chatModel.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("calls length = %d, want 1", len(calls))
+	}
+}
+
 func TestMockChatModelStreamResponse(t *testing.T) {
 	ctx := context.Background()
 	model := NewMockChatModel(MockModelStream("hel", "lo"))
@@ -75,6 +121,175 @@ func TestMockChatModelStreamResponse(t *testing.T) {
 	messages := agent.State().Messages()
 	if got := messages[len(messages)-1].Content; got != "hello" {
 		t.Fatalf("state content = %q, want %q", got, "hello")
+	}
+}
+
+func TestAgentEventSequenceForTextResponse(t *testing.T) {
+	ctx := context.Background()
+	model := NewMockChatModel(MockModelText("你好"))
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	events := newMockEventRecorder()
+	agent.Subscribe(events.Record)
+
+	if err := agent.Prompt(ctx, "打个招呼"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	events.RequireTypes(t,
+		EventAgentStart,
+		EventTurnStart,
+		EventMessageStart,
+		EventMessageDelta,
+		EventMessageEnd,
+		EventTurnEnd,
+		EventAgentEnd,
+	)
+	end := events.Last(EventMessageEnd)
+	if end == nil || end.Agent != "assistant" || end.Content != "你好" {
+		t.Fatalf("message end event = %#v", end)
+	}
+}
+
+func TestAgentStreamEventsReasoningAndMeta(t *testing.T) {
+	ctx := context.Background()
+	meta := &schema.ResponseMeta{
+		FinishReason: "stop",
+		Usage: &schema.TokenUsage{
+			PromptTokens:     3,
+			CompletionTokens: 2,
+			TotalTokens:      5,
+		},
+	}
+	model := NewMockChatModel(MockModelResponse{Chunks: []*schema.Message{
+		{Role: schema.Assistant, ReasoningContent: "想"},
+		{Role: schema.Assistant, Content: "你"},
+		{Role: schema.Assistant, ReasoningContent: "好了", Content: "好", ResponseMeta: meta},
+	}})
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	events := newMockEventRecorder()
+	agent.Subscribe(events.Record)
+
+	if err := agent.Prompt(ctx, "打个招呼"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	if got := events.Deltas(EventReasoningDelta); strings.Join(got, "") != "想好了" {
+		t.Fatalf("reasoning deltas = %v", got)
+	}
+	if got := events.Deltas(EventMessageDelta); strings.Join(got, "") != "你好" {
+		t.Fatalf("message deltas = %v", got)
+	}
+	end := events.Last(EventMessageEnd)
+	if end == nil {
+		t.Fatal("missing message end event")
+	}
+	if end.Content != "你好" || end.ReasoningContent != "想好了" {
+		t.Fatalf("message end event = %#v", end)
+	}
+	if end.ResponseMeta == nil || end.ResponseMeta.FinishReason != "stop" || end.ResponseMeta.Usage.TotalTokens != 5 {
+		t.Fatalf("response meta = %#v", end.ResponseMeta)
+	}
+
+	messages := agent.State().Messages()
+	last := messages[len(messages)-1]
+	if last.Content != "你好" || last.ReasoningContent != "想好了" {
+		t.Fatalf("state message = %#v", last)
+	}
+}
+
+func TestAgentStreamErrorEvent(t *testing.T) {
+	ctx := context.Background()
+	streamErr := errors.New("stream interrupted")
+	model := NewMockChatModel(MockModelStreamError(streamErr, "partial"))
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	events := newMockEventRecorder()
+	agent.Subscribe(events.Record)
+
+	err = agent.Prompt(ctx, "hello")
+	if !errors.Is(err, streamErr) {
+		t.Fatalf("Prompt() error = %v, want %v", err, streamErr)
+	}
+	errorEvent := events.Last(EventError)
+	if errorEvent == nil || !errors.Is(errorEvent.Error, streamErr) {
+		t.Fatalf("error event = %#v", errorEvent)
+	}
+	if got := events.Deltas(EventMessageDelta); strings.Join(got, "") != "partial" {
+		t.Fatalf("message deltas = %v", got)
+	}
+	if got := agent.State().Messages(); len(got) != 1 {
+		t.Fatalf("messages length = %d, want 1", len(got))
+	}
+}
+
+func TestAgentToolEventsAndUpdates(t *testing.T) {
+	ctx := context.Background()
+	tool := MustMockTool("echo", "echo text", func(ctx context.Context, input *mockEchoInput) (string, error) {
+		EmitToolUpdate(ctx, "正在执行")
+		return "echo: " + input.Text, nil
+	})
+	call := tool.Call("echo_call", &mockEchoInput{Text: "hi"})
+	model := NewMockChatModel(
+		MockModelCalls(call),
+		MockModelTextAfter(call, func(result string) string {
+			return "工具返回 " + result
+		}),
+	)
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+		Tools: MockTools(tool),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	events := newMockEventRecorder()
+	agent.Subscribe(events.Record)
+
+	if err := agent.Prompt(ctx, "调用 echo"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	toolStart := events.Last(EventToolStart)
+	if toolStart == nil || len(toolStart.ToolCalls) != 1 || toolStart.ToolCalls[0].ID != "echo_call" {
+		t.Fatalf("tool start event = %#v", toolStart)
+	}
+	if update := events.Last(EventToolUpdate); update == nil || update.Content != "正在执行" {
+		t.Fatalf("tool update event = %#v", update)
+	}
+	if end := events.Last(EventToolEnd); end == nil || end.Content != "echo: hi" {
+		t.Fatalf("tool end event = %#v", end)
+	}
+	if got := events.Count(EventTurnStart); got != 2 {
+		t.Fatalf("turn start count = %d, want 2", got)
+	}
+	if got := events.Count(EventTurnEnd); got != 2 {
+		t.Fatalf("turn end count = %d, want 2", got)
 	}
 }
 
@@ -309,6 +524,210 @@ func TestMockToolParallelRound(t *testing.T) {
 	}
 }
 
+func TestAgentSteeringAfterToolResult(t *testing.T) {
+	ctx := context.Background()
+	weather := MustMockTool("weather", "query weather",
+		func(ctx context.Context, input *mockWeatherInput) (string, error) {
+			return input.City + "晴", nil
+		})
+	beijing := weather.Call("beijing_weather", &mockWeatherInput{City: "北京"})
+
+	model := NewMockChatModel(
+		MockModelCalls(beijing),
+		MockExpect(MockModelText("已改查上海"), func(call MockModelCall) error {
+			if got := lastMessageContentByRole(call.Input, schema.User); got != "改查上海" {
+				return fmt.Errorf("last user input = %q, want %q", got, "改查上海")
+			}
+			if !inputHasToolResult(call.Input, "beijing_weather") {
+				return errors.New("missing weather tool result")
+			}
+			return nil
+		}),
+	)
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+		Tools: MockTools(weather),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	steered := false
+	events := newMockEventRecorder()
+	agent.Subscribe(func(event Event) {
+		events.Record(event)
+		if event.Type == EventToolEnd && !steered {
+			steered = true
+			agent.Steer("改查上海")
+		}
+	})
+
+	if err := agent.Prompt(ctx, "查北京天气"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	messages := agent.State().Messages()
+	if got := messageContents(messages); strings.Join(got, "|") != "查北京天气|改查上海|已改查上海" {
+		t.Fatalf("state messages = %#v", messages)
+	}
+	calls := model.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("model calls length = %d, want 2", len(calls))
+	}
+	if got := lastMessageContentByRole(calls[len(calls)-1].Input, schema.User); got != "改查上海" {
+		t.Fatalf("last model user input = %q, want %q", got, "改查上海")
+	}
+	if got := events.Count(EventAgentStart); got != 1 {
+		t.Fatalf("agent start count = %d, want 1", got)
+	}
+	if got := events.Count(EventAgentEnd); got != 1 {
+		t.Fatalf("agent end count = %d, want 1", got)
+	}
+}
+
+func TestAgentFollowUpQueueProcessesAfterCurrentRun(t *testing.T) {
+	ctx := context.Background()
+	model := NewMockChatModel(
+		MockModelText("第一条"),
+		MockExpect(MockModelText("第二条"), func(call MockModelCall) error {
+			if got := lastMessageContentByRole(call.Input, schema.User); got != "继续" {
+				return fmt.Errorf("last user input = %q, want %q", got, "继续")
+			}
+			return nil
+		}),
+	)
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	queued := false
+	agent.Subscribe(func(event Event) {
+		if event.Type == EventMessageEnd && event.Content == "第一条" && !queued {
+			queued = true
+			agent.FollowUp("继续")
+		}
+	})
+
+	if err := agent.Prompt(ctx, "开始"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	messages := agent.State().Messages()
+	if got := messageContents(messages); strings.Join(got, "|") != "开始|第一条|继续|第二条" {
+		t.Fatalf("state messages = %#v", messages)
+	}
+	if calls := model.Calls(); len(calls) != 2 {
+		t.Fatalf("model calls length = %d, want 2", len(calls))
+	}
+}
+
+func TestAgentFollowUpQueueAllModeBatchesMessages(t *testing.T) {
+	ctx := context.Background()
+	model := NewMockChatModel(
+		MockModelText("第一条"),
+		MockExpect(MockModelText("完成"), func(call MockModelCall) error {
+			if got := userMessageContents(call.Input); strings.Join(got, "|") != "开始|继续一|继续二" {
+				return fmt.Errorf("user inputs = %v", got)
+			}
+			return nil
+		}),
+	)
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	agent.SetFollowUpMode(QueueModeAll)
+	queued := false
+	agent.Subscribe(func(event Event) {
+		if event.Type == EventMessageEnd && event.Content == "第一条" && !queued {
+			queued = true
+			agent.FollowUp("继续一")
+			agent.FollowUp("继续二")
+		}
+	})
+
+	if err := agent.Prompt(ctx, "开始"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+
+	if calls := model.Calls(); len(calls) != 2 {
+		t.Fatalf("model calls length = %d, want 2", len(calls))
+	}
+	messages := agent.State().Messages()
+	if got := messageContents(messages); strings.Join(got, "|") != "开始|第一条|继续一|继续二|完成" {
+		t.Fatalf("state messages = %#v", messages)
+	}
+}
+
+func TestAgentRunningRejectsConcurrentPrompt(t *testing.T) {
+	ctx := context.Background()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	tool := MustMockTool("wait", "wait for release", func(ctx context.Context, input *mockEchoInput) (string, error) {
+		close(started)
+		select {
+		case <-release:
+			return "done", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	call := tool.Call("wait_call", &mockEchoInput{Text: "hi"})
+	model := NewMockChatModel(
+		MockModelCalls(call),
+		MockModelTextAfter(call, func(result string) string {
+			return result
+		}),
+	)
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+		Tools: MockTools(tool),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- agent.Prompt(ctx, "开始")
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("tool did not start")
+	}
+
+	err = agent.Prompt(ctx, "并发输入")
+	if err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("concurrent Prompt() error = %v", err)
+	}
+
+	close(release)
+	select {
+	case err := <-runErr:
+		if err != nil {
+			t.Fatalf("first Prompt() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first prompt did not finish")
+	}
+}
+
 func TestMockChatModelNoResponse(t *testing.T) {
 	ctx := context.Background()
 	model := NewMockChatModel()
@@ -365,6 +784,114 @@ func lastMessageContent(messages []*schema.Message) string {
 		return ""
 	}
 	return messages[len(messages)-1].Content
+}
+
+type mockEventRecorder struct {
+	mu     sync.Mutex
+	events []Event
+}
+
+func newMockEventRecorder() *mockEventRecorder {
+	return &mockEventRecorder{}
+}
+
+func (r *mockEventRecorder) Record(event Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, event)
+}
+
+func (r *mockEventRecorder) Events() []Event {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]Event, len(r.events))
+	copy(out, r.events)
+	return out
+}
+
+func (r *mockEventRecorder) Last(eventType EventType) *Event {
+	events := r.Events()
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type == eventType {
+			return &events[i]
+		}
+	}
+	return nil
+}
+
+func (r *mockEventRecorder) Count(eventType EventType) int {
+	events := r.Events()
+	count := 0
+	for _, event := range events {
+		if event.Type == eventType {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *mockEventRecorder) Deltas(eventType EventType) []string {
+	events := r.Events()
+	out := make([]string, 0, len(events))
+	for _, event := range events {
+		if event.Type == eventType {
+			out = append(out, event.Delta)
+		}
+	}
+	return out
+}
+
+func (r *mockEventRecorder) RequireTypes(t *testing.T, expected ...EventType) {
+	t.Helper()
+	events := r.Events()
+	actual := make([]EventType, 0, len(events))
+	for _, event := range events {
+		actual = append(actual, event.Type)
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("event types = %v, want %v", actual, expected)
+	}
+	for i := range expected {
+		if actual[i] != expected[i] {
+			t.Fatalf("event types = %v, want %v", actual, expected)
+		}
+	}
+}
+
+func messageContents(messages []Message) []string {
+	out := make([]string, 0, len(messages))
+	for _, message := range messages {
+		out = append(out, message.Content)
+	}
+	return out
+}
+
+func userMessageContents(messages []*schema.Message) []string {
+	out := make([]string, 0, len(messages))
+	for _, message := range messages {
+		if message.Role == schema.User {
+			out = append(out, message.Content)
+		}
+	}
+	return out
+}
+
+func firstMessageContentByRole(messages []*schema.Message, role schema.RoleType) string {
+	for _, message := range messages {
+		if message.Role == role {
+			return message.Content
+		}
+	}
+	return ""
+}
+
+func lastMessageContentByRole(messages []*schema.Message, role schema.RoleType) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == role {
+			return messages[i].Content
+		}
+	}
+	return ""
 }
 
 func historyHasRole(messages []*schema.Message, role schema.RoleType) bool {

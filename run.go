@@ -50,15 +50,25 @@ func (a *Agent) processQueues(ctx context.Context, err error) error {
 }
 
 // executeLoop 执行一次 runner.Run，消费事件流。
-// 在工具结果事件后检查 steering 队列，若有消息则取消当前执行并返回 nil，
-// 由 processQueues 注入 steering 消息后重新执行。
 func (a *Agent) executeLoop(parentCtx context.Context) error {
 	a.mu.Lock()
 	history := make([]*schema.Message, len(a.history))
 	copy(history, a.history)
 	a.mu.Unlock()
 
-	iter := a.runner.Run(parentCtx, history, adk.WithCheckPointID(a.checkPointID))
+	cancelOpt, cancelAgent := adk.WithCancel()
+	iter := a.runner.Run(
+		parentCtx,
+		history,
+		cancelOpt,
+		adk.WithCheckPointID(a.checkPointID),
+		adk.WithAfterToolCallsHook(func(ctx context.Context) error {
+			if a.hasSteering() {
+				cancelAgent(adk.WithAgentCancelMode(adk.CancelAfterToolCalls))
+			}
+			return nil
+		}),
+	)
 	return a.consumeIter(parentCtx, iter)
 }
 
@@ -73,7 +83,7 @@ func (a *Agent) executeResume(parentCtx context.Context, targets map[string]any)
 	return a.consumeIter(parentCtx, iter)
 }
 
-// consumeIter 消费事件迭代器，处理事件并检查 steering
+// consumeIter 消费事件迭代器，处理事件。
 func (a *Agent) consumeIter(parentCtx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent]) error {
 	ctx, cancel := context.WithCancel(parentCtx)
 	a.mu.Lock()
@@ -104,24 +114,28 @@ func (a *Agent) consumeIter(parentCtx context.Context, iter *adk.AsyncIterator[*
 		}
 
 		if event.Err != nil {
+			if a.isSteeringCancel(event.Err) {
+				a.endTurn()
+				return nil
+			}
 			lastErr = event.Err
 		}
 
 		if err := a.processEvent(ctx, event); err != nil {
 			lastErr = err
 		}
-
-		// 工具间粒度 steering：工具结果返回后检查转向队列
-		if event.Output != nil && event.Output.MessageOutput != nil &&
-			event.Output.MessageOutput.Role == schema.Tool && a.hasSteering() {
-			cancel()
-			a.endTurn()
-			return nil
-		}
 	}
 
 	a.endTurn()
 	return lastErr
+}
+
+func (a *Agent) isSteeringCancel(err error) bool {
+	if !a.hasSteering() {
+		return false
+	}
+	var cancelErr *adk.CancelError
+	return errors.As(err, &cancelErr) && cancelErr.Info != nil && cancelErr.Info.Mode&adk.CancelAfterToolCalls != 0
 }
 
 func (a *Agent) hasSteering() bool {
