@@ -32,7 +32,7 @@ func main() {
 
 	// 多轮对话
 	questions := []string{
-		"你好！请用一句话介绍 agentkit。",
+		"你好！请用一句话介绍 wsshow/agentkit。",
 		"它基于哪个框架？",
 		"谢谢！",
 	}

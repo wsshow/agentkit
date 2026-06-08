@@ -27,7 +27,7 @@ func main() {
 	}
 	demo.SubscribeText(agent)
 
-	if err := demo.Ask(ctx, agent, "我叫小王，喜欢喝咖啡。请记住。"); err != nil {
+	if err := demo.Ask(ctx, agent, "我叫包子，不喜欢喝咖啡。请记住。"); err != nil {
 		log.Fatalln(err)
 	}
 

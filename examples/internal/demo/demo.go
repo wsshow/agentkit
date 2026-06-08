@@ -16,9 +16,9 @@ func NewChatModel(ctx context.Context) (agentkit.ChatModel, error) {
 		return nil, err
 	}
 	return openai.NewChatModel(ctx, &openai.ChatModelConfig{
-		APIKey:  os.Getenv("FEIKONG_OPENAI_API_KEY"),
-		BaseURL: os.Getenv("FEIKONG_OPENAI_BASE_URL"),
-		Model:   os.Getenv("FEIKONG_OPENAI_MODEL"),
+		APIKey:  os.Getenv("FEIKONG_API_KEY"),
+		BaseURL: os.Getenv("FEIKONG_BASE_URL"),
+		Model:   os.Getenv("FEIKONG_MODEL"),
 	})
 }
 
