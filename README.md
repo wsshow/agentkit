@@ -11,6 +11,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 ## Features
 
 - **Event-stream architecture** — Subscribe to fine-grained events (message deltas, tool calls, errors, etc.)
+- **Simple run results** — Use `Ask` for the final response, accumulated usage, tool calls, and interrupts without wiring subscribers
 - **Steering & follow-up queues** — Inject messages mid-execution to redirect the agent or append follow-up tasks
 - **Human-in-the-loop (HITL)** — Interrupt agent execution and resume with user-provided data
 - **Streaming support** — Real-time token-by-token output via Eino ADK streaming
@@ -67,24 +68,15 @@ func main() {
 	}
 	defer agent.Close()
 
-	agent.Subscribe(func(e agentkit.Event) {
-		switch e.Type {
-		case agentkit.EventReasoningDelta:
-			fmt.Print(e.Delta) // reasoning/thinking stream (for reasoning models)
-		case agentkit.EventMessageDelta:
-			fmt.Print(e.Delta)
-		case agentkit.EventMessageEnd:
-			fmt.Println()
-		case agentkit.EventError:
-			fmt.Printf("Error: %v\n", e.Error)
-		}
-	})
-
-	if err := agent.Prompt(ctx, "Hello!"); err != nil {
+	result, err := agent.Ask(ctx, "Hello!")
+	if err != nil {
 		log.Fatalln(err)
 	}
+	fmt.Println(result.Text)
 }
 ```
+
+`Ask` is the simplest blocking API. `RunResult` also contains the final schema message, messages added during the run, accumulated token usage, tool calls, and pending HITL interrupts. Subscribe to events when real-time output or tool progress is needed.
 
 ## Event Types
 
@@ -174,17 +166,26 @@ For manual history restoration, use `History: savedHistory` instead of `Session`
 // Send user text input and drive agent execution (blocking, thread-safe)
 err := agent.Prompt(ctx, "user message")
 
+// Or receive the final response and run metadata directly
+result, err := agent.Ask(ctx, "user message")
+fmt.Println(result.Text, result.Usage)
+
 // Send multimodal input (text + images, audio, video, files)
 err := agent.Send(ctx,
     agentkit.Text("What is in this image?"),
     agentkit.ImageURL("https://example.com/cat.jpg"),
 )
 
+// Multimodal equivalent that returns RunResult
+result, err = agent.AskParts(ctx, agentkit.Text("Describe this"), agentkit.ImageURL(imageURL))
+
 // Resume from current state without new message (e.g. retry after error)
 err := agent.Continue(ctx)
+result, err = agent.ContinueWithResult(ctx)
 
 // Resume from a HITL interrupt
 err := agent.Resume(ctx, map[string]any{"interruptID": data})
+result, err = agent.ResumeWithResult(ctx, map[string]any{"interruptID": data})
 
 // Inspect or explicitly discard a pending HITL interrupt
 pending := agent.PendingInterrupts()

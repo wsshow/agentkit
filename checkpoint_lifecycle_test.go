@@ -106,8 +106,12 @@ func TestFileSessionRestoresAndConsumesHITLCheckpoint(t *testing.T) {
 		t.Fatalf("restored pending interrupts = %#v, want %#v", restoredPending, pending)
 	}
 
-	if err := second.Resume(ctx, map[string]any{pending[0].ID: true}); err != nil {
+	resumeResult, err := second.ResumeWithResult(ctx, map[string]any{pending[0].ID: true})
+	if err != nil {
 		t.Fatalf("Resume() error = %v", err)
+	}
+	if resumeResult == nil || resumeResult.Text != "approved" || resumeResult.IsInterrupted() {
+		t.Fatalf("ResumeWithResult() = %#v", resumeResult)
 	}
 	if got := second.PendingInterrupts(); len(got) != 0 {
 		t.Fatalf("PendingInterrupts() after resume = %#v", got)

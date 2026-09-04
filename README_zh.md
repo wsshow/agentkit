@@ -11,6 +11,7 @@
 ## 特性
 
 - **事件流架构** — 订阅细粒度事件（消息增量、工具调用、错误等）
+- **简单运行结果** — 通过 `Ask` 直接获得最终回复、累计用量、工具调用和中断信息，无需先编写订阅器
 - **转向与后续消息队列** — 在执行过程中注入消息以重定向 Agent 或追加后续任务
 - **人机协作（HITL）** — 中断 Agent 执行并在用户提供数据后恢复
 - **流式输出** — 通过 Eino ADK 流式传输实时逐 token 输出
@@ -67,24 +68,15 @@ func main() {
 	}
 	defer agent.Close()
 
-	agent.Subscribe(func(e agentkit.Event) {
-		switch e.Type {
-		case agentkit.EventReasoningDelta:
-			fmt.Print(e.Delta) // 推理/思考过程的流式输出（推理模型）
-		case agentkit.EventMessageDelta:
-			fmt.Print(e.Delta)
-		case agentkit.EventMessageEnd:
-			fmt.Println()
-		case agentkit.EventError:
-			fmt.Printf("错误: %v\n", e.Error)
-		}
-	})
-
-	if err := agent.Prompt(ctx, "你好！"); err != nil {
+	result, err := agent.Ask(ctx, "你好！")
+	if err != nil {
 		log.Fatalln(err)
 	}
+	fmt.Println(result.Text)
 }
 ```
+
+`Ask` 是最简单的阻塞式 API。`RunResult` 还包含最终 schema 消息、本次新增消息、累计 token 用量、工具调用和待处理的 HITL 中断。需要实时输出或工具进度时再订阅事件即可。
 
 ## 事件类型
 
@@ -174,17 +166,26 @@ defer agent.Close()
 // 发送用户文本输入并驱动 Agent 执行（阻塞调用，并发安全）
 err := agent.Prompt(ctx, "用户消息")
 
+// 或直接获得最终回复与本次运行元数据
+result, err := agent.Ask(ctx, "用户消息")
+fmt.Println(result.Text, result.Usage)
+
 // 发送多模态输入（文本 + 图片、音频、视频、文件）
 err := agent.Send(ctx,
     agentkit.Text("这张图片里是什么？"),
     agentkit.ImageURL("https://example.com/cat.jpg"),
 )
 
+// 返回 RunResult 的多模态调用
+result, err = agent.AskParts(ctx, agentkit.Text("描述这张图"), agentkit.ImageURL(imageURL))
+
 // 从当前状态恢复执行，不添加新消息（例如错误后重试）
 err := agent.Continue(ctx)
+result, err = agent.ContinueWithResult(ctx)
 
 // 从 HITL 中断恢复
 err := agent.Resume(ctx, map[string]any{"interruptID": data})
+result, err = agent.ResumeWithResult(ctx, map[string]any{"interruptID": data})
 
 // 查看或明确放弃等待处理的 HITL 中断
 pending := agent.PendingInterrupts()

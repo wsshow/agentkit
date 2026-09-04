@@ -321,27 +321,54 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 // Prompt 发送用户输入并驱动 Agent 执行，事件通过 Subscribe 订阅。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Prompt(ctx context.Context, input string) error {
+	_, err := a.promptWithResult(ctx, input)
+	return err
+}
+
+// Ask 发送用户文本并返回本次执行的完整结果。
+func (a *Agent) Ask(ctx context.Context, input string) (*RunResult, error) {
+	return a.promptWithResult(ctx, input)
+}
+
+func (a *Agent) promptWithResult(ctx context.Context, input string) (*RunResult, error) {
 	runCtx, err := a.startFreshRun(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer a.endRun()
 
+	a.mu.Lock()
+	historyOffset := len(a.history)
+	a.mu.Unlock()
 	a.state.AddMessage(Message{Role: RoleUser, Content: input})
 	a.appendHistory(schema.UserMessage(input))
-	return a.run(runCtx, []Message{{Role: RoleUser, Content: input}})
+	err = a.run(runCtx, []Message{{Role: RoleUser, Content: input}})
+	return a.resultSince(historyOffset), err
 }
 
 // Send 发送多模态内容并驱动 Agent 执行。
 // 使用 Text、ImageURL、AudioURL 等构造函数创建 ContentPart。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
+	_, err := a.sendWithResult(ctx, parts...)
+	return err
+}
+
+// AskParts 发送多模态内容并返回本次执行的完整结果。
+func (a *Agent) AskParts(ctx context.Context, parts ...ContentPart) (*RunResult, error) {
+	return a.sendWithResult(ctx, parts...)
+}
+
+func (a *Agent) sendWithResult(ctx context.Context, parts ...ContentPart) (*RunResult, error) {
 	runCtx, err := a.startFreshRun(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer a.endRun()
 
+	a.mu.Lock()
+	historyOffset := len(a.history)
+	a.mu.Unlock()
 	// 提取纯文本用于 State 记录
 	var textContent string
 	for _, p := range parts {
@@ -354,15 +381,26 @@ func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
 		Role:                  schema.User,
 		UserInputMultiContent: parts,
 	})
-	return a.run(runCtx, []Message{{Role: RoleUser, Content: textContent}})
+	err = a.run(runCtx, []Message{{Role: RoleUser, Content: textContent}})
+	return a.resultSince(historyOffset), err
 }
 
 // Continue 从当前状态恢复执行（不添加新消息），用于错误后重试。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Continue(ctx context.Context) error {
+	_, err := a.continueWithResult(ctx)
+	return err
+}
+
+// ContinueWithResult 从当前状态继续执行并返回本次新增的结果。
+func (a *Agent) ContinueWithResult(ctx context.Context) (*RunResult, error) {
+	return a.continueWithResult(ctx)
+}
+
+func (a *Agent) continueWithResult(ctx context.Context) (*RunResult, error) {
 	runCtx, err := a.startFreshRun(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer a.endRun()
 
@@ -375,12 +413,13 @@ func (a *Agent) Continue(ctx context.Context) error {
 	a.mu.Unlock()
 
 	if histLen == 0 {
-		return ErrNoMessagesToContinue
+		return nil, ErrNoMessagesToContinue
 	}
 	if lastRole == schema.Assistant {
-		return ErrCannotContinue
+		return nil, ErrCannotContinue
 	}
-	return a.run(runCtx, nil)
+	err = a.run(runCtx, nil)
+	return a.resultSince(histLen), err
 }
 
 // Steer 在 Agent 执行期间插入转向消息。
@@ -479,11 +518,24 @@ func (a *Agent) appendHistory(msg *schema.Message) {
 // targets 格式为 map[interruptID]data，interruptID 来自 Event.Interrupt[].ID。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Resume(ctx context.Context, targets map[string]any) error {
+	_, err := a.resumeWithResult(ctx, targets)
+	return err
+}
+
+// ResumeWithResult 从 HITL 中断恢复并返回本次恢复执行新增的结果。
+func (a *Agent) ResumeWithResult(ctx context.Context, targets map[string]any) (*RunResult, error) {
+	return a.resumeWithResult(ctx, targets)
+}
+
+func (a *Agent) resumeWithResult(ctx context.Context, targets map[string]any) (*RunResult, error) {
 	runCtx, err := a.startRun(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer a.endRun()
+	a.mu.Lock()
+	historyOffset := len(a.history)
+	a.mu.Unlock()
 
 	runCtx = a.withRunContext(runCtx)
 
@@ -500,7 +552,7 @@ func (a *Agent) Resume(ctx context.Context, targets map[string]any) error {
 	err = a.persistSession(runCtx, err)
 
 	a.emtr.Emit(Event{Type: EventAgentEnd, Agent: a.name})
-	return err
+	return a.resultSince(historyOffset), err
 }
 
 // Subscribe 订阅事件流，返回取消订阅函数。
