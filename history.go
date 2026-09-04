@@ -11,6 +11,8 @@ func (a *Agent) replaceHistory(history []*schema.Message) {
 	a.steeringQueue = nil
 	a.followUpQueue = nil
 	a.toolCalls = make(map[string]toolCallInfo)
+	a.toolBatchDone = nil
+	a.toolBatchDoneFlag = false
 	a.mu.Unlock()
 
 	a.state.replaceMessages(stateMessages)

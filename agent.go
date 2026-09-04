@@ -38,7 +38,11 @@ func EmitToolUpdate(ctx context.Context, content string) {
 	callID := compose.GetToolCallID(ctx)
 	toolName, arguments := "", ""
 	if a, _ := ctx.Value(agentCtxKey{}).(*Agent); a != nil {
-		toolName, arguments = a.toolCallInfo(callID)
+		var ok bool
+		toolName, arguments, ok = a.waitToolCallInfo(ctx, callID)
+		if !ok {
+			return
+		}
 	}
 	if e != nil {
 		e.Emit(Event{
@@ -81,17 +85,21 @@ type Agent struct {
 	done     chan struct{} // 执行完成信号
 	inTurn   atomic.Bool   // turn 状态跟踪（原子操作，线程安全）
 
-	history       []*schema.Message // 完整对话历史（含 assistant/tool），用于 steering/follow-up 重放
-	steeringQueue []Message
-	followUpQueue []Message
-	steeringMode  QueueMode
-	followUpMode  QueueMode
-	toolCalls     map[string]toolCallInfo
+	history           []*schema.Message // 完整对话历史（含 assistant/tool），用于 steering/follow-up 重放
+	steeringQueue     []Message
+	followUpQueue     []Message
+	steeringMode      QueueMode
+	followUpMode      QueueMode
+	toolCalls         map[string]toolCallInfo
+	toolBatchDone     chan struct{}
+	toolBatchDoneFlag bool
 }
 
 type toolCallInfo struct {
 	name      string
 	arguments string
+	start     chan struct{}
+	started   bool
 }
 
 // New 创建 Agent
@@ -415,6 +423,8 @@ func (a *Agent) Reset() {
 	a.steeringQueue = nil
 	a.followUpQueue = nil
 	a.toolCalls = make(map[string]toolCallInfo)
+	a.toolBatchDone = nil
+	a.toolBatchDoneFlag = false
 }
 
 // startRun 标记 Agent 开始执行。如果已在执行中，返回错误。

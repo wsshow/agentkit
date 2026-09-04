@@ -66,7 +66,9 @@ func (a *Agent) executeLoop(parentCtx context.Context) error {
 		cancelOpt,
 		adk.WithCheckPointID(a.checkPointID),
 		adk.WithAfterToolCallsHook(func(ctx context.Context) error {
-			a.endTurn()
+			if err := a.waitToolBatch(ctx); err != nil {
+				return err
+			}
 			if a.hasSteering() {
 				cancelAgent(adk.WithAgentCancelMode(adk.CancelAfterToolCalls))
 			}
@@ -84,7 +86,9 @@ func (a *Agent) executeResume(parentCtx context.Context, targets map[string]any)
 	},
 		cancelOpt,
 		adk.WithAfterToolCallsHook(func(ctx context.Context) error {
-			a.endTurn()
+			if err := a.waitToolBatch(ctx); err != nil {
+				return err
+			}
 			if a.hasSteering() {
 				cancelAgent(adk.WithAgentCancelMode(adk.CancelAfterToolCalls))
 			}
@@ -230,7 +234,10 @@ func (a *Agent) processMessage(agentName string, msg adk.Message) {
 		})
 		a.emitMessageStart(agentName, RoleTool, msg.Content)
 		a.emitMessageEnd(agentName, RoleTool, msg.Content, "", nil)
-		a.clearToolCall(msg.ToolCallID)
+		if a.clearToolCall(msg.ToolCallID) {
+			a.endTurn()
+			a.completeToolBatch()
+		}
 		return
 	}
 
