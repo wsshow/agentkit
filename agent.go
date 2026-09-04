@@ -471,7 +471,8 @@ func (a *Agent) Resume(ctx context.Context, targets map[string]any) error {
 	return err
 }
 
-// Subscribe 订阅事件流，返回取消订阅函数
+// Subscribe 订阅事件流，返回取消订阅函数。
+// 回调按订阅顺序同步执行，每个回调收到独立的事件快照；nil 回调会被忽略。
 func (a *Agent) Subscribe(fn Subscriber) func() {
 	return a.emtr.Subscribe(fn)
 }

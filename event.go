@@ -1,6 +1,7 @@
 package agentkit
 
 import (
+	"sort"
 	"sync"
 )
 
@@ -64,8 +65,12 @@ func newEmitter() *emitter {
 	return &emitter{subscribers: make(map[int]Subscriber)}
 }
 
-// Subscribe 订阅事件，返回取消订阅函数
+// Subscribe 订阅事件，返回取消订阅函数。
+// 回调按订阅顺序同步执行；nil 回调会被忽略。
 func (e *emitter) Subscribe(fn Subscriber) func() {
+	if fn == nil {
+		return func() {}
+	}
 	e.mu.Lock()
 	id := e.nextID
 	e.nextID++
@@ -82,13 +87,30 @@ func (e *emitter) Subscribe(fn Subscriber) func() {
 // Emit 发射事件到所有订阅者
 func (e *emitter) Emit(event Event) {
 	e.mu.RLock()
-	subs := make([]Subscriber, 0, len(e.subscribers))
-	for _, fn := range e.subscribers {
-		subs = append(subs, fn)
+	ids := make([]int, 0, len(e.subscribers))
+	for id := range e.subscribers {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	subs := make([]Subscriber, 0, len(ids))
+	for _, id := range ids {
+		subs = append(subs, e.subscribers[id])
 	}
 	e.mu.RUnlock()
 
 	for _, fn := range subs {
-		fn(event)
+		fn(cloneEvent(event))
 	}
+}
+
+func cloneEvent(event Event) Event {
+	out := event
+	out.ResponseMeta = cloneResponseMeta(event.ResponseMeta)
+	out.ToolCalls = cloneToolCalls(event.ToolCalls)
+	out.Interrupt = append([]InterruptPoint(nil), event.Interrupt...)
+	if event.Compaction != nil {
+		compaction := *event.Compaction
+		out.Compaction = &compaction
+	}
+	return out
 }
