@@ -3,7 +3,7 @@ module github.com/wsshow/agentkit
 go 1.25.3
 
 require (
-	github.com/cloudwego/eino v0.9.4
+	github.com/cloudwego/eino v0.9.19
 	github.com/google/uuid v1.6.0
 	gopkg.in/yaml.v3 v3.0.1
 )
