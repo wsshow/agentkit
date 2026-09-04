@@ -35,6 +35,8 @@ var (
 	ErrNoMessagesToContinue = errors.New("no messages in state to continue from")
 	// ErrCannotContinue 表示最后一条消息已由助手完成，不能继续执行。
 	ErrCannotContinue = errors.New("cannot continue from assistant message, last message must be user or tool result")
+	// ErrResumeRequired 表示存在未处理的检查点，必须先 Resume 或 ClearCheckpoint。
+	ErrResumeRequired = errors.New("agentkit: pending checkpoint must be resumed or cleared before starting a new run")
 )
 
 // EmitToolUpdate 在工具执行中发送进度更新事件。
@@ -89,11 +91,12 @@ type Config struct {
 
 // Agent 提供事件流驱动的交互能力。
 type Agent struct {
-	name         string
-	runner       *adk.Runner
-	state        *State
-	emtr         *emitter
-	checkPointID string // 每个 Agent 实例唯一的 CheckPoint ID
+	name            string
+	runner          *adk.Runner
+	state           *State
+	emtr            *emitter
+	checkPointID    string // 每个 Agent 实例唯一的 CheckPoint ID
+	checkpointStore CheckpointStore
 
 	mu       sync.Mutex
 	cancelFn context.CancelFunc
@@ -113,6 +116,8 @@ type Agent struct {
 	toolBatchDone            chan struct{}
 	toolBatchDoneFlag        bool
 	compactionMessagesBefore int
+	pendingInterrupts        []InterruptPoint
+	runInterrupted           bool
 
 	sessionStore     SessionStore
 	sessionID        string
@@ -170,7 +175,10 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 
 	checkPointID := cfg.Name + "/" + uuid.New().String()
 	if loadedSession != nil {
-		checkPointID = "agentkit/session/" + sessionStorageKey(cfg.Name+"\x00"+loadedSession.ID)
+		checkPointID = loadedSession.CheckpointID
+		if checkPointID == "" {
+			checkPointID = "agentkit/session/" + sessionStorageKey(cfg.Name+"\x00"+loadedSession.ID)
+		}
 	}
 
 	a := &Agent{
@@ -189,6 +197,9 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		a.sessionUpdatedAt = loadedSession.UpdatedAt
 	}
 	a.restoreHistory(history, contextHistory, loadedSession != nil && loadedSession.Context != nil)
+	if loadedSession != nil {
+		a.pendingInterrupts = cloneInterruptPoints(loadedSession.PendingInterrupts)
+	}
 
 	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+3)
 	handlers = append(handlers, cfg.Handlers...)
@@ -258,6 +269,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	if store == nil {
 		store = NewMemoryCheckpointStore()
 	}
+	a.checkpointStore = store
 
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{
 		Agent:           adkAgent,
@@ -309,7 +321,7 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 // Prompt 发送用户输入并驱动 Agent 执行，事件通过 Subscribe 订阅。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Prompt(ctx context.Context, input string) error {
-	runCtx, err := a.startRun(ctx)
+	runCtx, err := a.startFreshRun(ctx)
 	if err != nil {
 		return err
 	}
@@ -324,7 +336,7 @@ func (a *Agent) Prompt(ctx context.Context, input string) error {
 // 使用 Text、ImageURL、AudioURL 等构造函数创建 ContentPart。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
-	runCtx, err := a.startRun(ctx)
+	runCtx, err := a.startFreshRun(ctx)
 	if err != nil {
 		return err
 	}
@@ -348,7 +360,7 @@ func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
 // Continue 从当前状态恢复执行（不添加新消息），用于错误后重试。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Continue(ctx context.Context) error {
-	runCtx, err := a.startRun(ctx)
+	runCtx, err := a.startFreshRun(ctx)
 	if err != nil {
 		return err
 	}
@@ -479,6 +491,12 @@ func (a *Agent) Resume(ctx context.Context, targets map[string]any) error {
 
 	err = a.executeResume(runCtx, targets)
 	err = a.processQueues(runCtx, err)
+	if err == nil && !a.wasInterrupted() {
+		if cleanupErr := a.discardCheckpoint(runCtx); cleanupErr != nil {
+			a.emtr.Emit(Event{Type: EventError, Agent: a.name, Error: cleanupErr})
+			err = cleanupErr
+		}
+	}
 	err = a.persistSession(runCtx, err)
 
 	a.emtr.Emit(Event{Type: EventAgentEnd, Agent: a.name})
@@ -563,11 +581,13 @@ func (a *Agent) Session() *Session {
 		return nil
 	}
 	return &Session{
-		ID:        a.sessionID,
-		CreatedAt: a.sessionCreatedAt,
-		UpdatedAt: a.sessionUpdatedAt,
-		Messages:  cloneHistoryMessages(a.history),
-		Context:   a.sessionContextLocked(),
+		ID:                a.sessionID,
+		CreatedAt:         a.sessionCreatedAt,
+		UpdatedAt:         a.sessionUpdatedAt,
+		Messages:          cloneHistoryMessages(a.history),
+		Context:           a.sessionContextLocked(),
+		CheckpointID:      a.checkPointID,
+		PendingInterrupts: cloneInterruptPoints(a.pendingInterrupts),
 	}
 }
 
@@ -594,11 +614,13 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 		createdAt = now
 	}
 	session := &Session{
-		ID:        a.sessionID,
-		CreatedAt: createdAt,
-		UpdatedAt: now,
-		Messages:  cloneHistoryMessages(a.history),
-		Context:   a.sessionContextLocked(),
+		ID:                a.sessionID,
+		CreatedAt:         createdAt,
+		UpdatedAt:         now,
+		Messages:          cloneHistoryMessages(a.history),
+		Context:           a.sessionContextLocked(),
+		CheckpointID:      a.checkPointID,
+		PendingInterrupts: cloneInterruptPoints(a.pendingInterrupts),
 	}
 	store := a.sessionStore
 	a.mu.Unlock()
@@ -617,6 +639,7 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 // SetHistory 替换完整对话历史，并同步展示状态。
 func (a *Agent) SetHistory(history []*schema.Message) {
 	a.Abort()
+	_ = a.discardCheckpoint(context.Background())
 	a.replaceHistory(history)
 }
 
@@ -624,6 +647,7 @@ func (a *Agent) SetHistory(history []*schema.Message) {
 // 如果 Agent 正在执行，先等待执行完成。
 func (a *Agent) Reset() {
 	a.Abort()
+	_ = a.discardCheckpoint(context.Background())
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.state.Clear()
@@ -636,6 +660,42 @@ func (a *Agent) Reset() {
 	a.toolBatchDone = nil
 	a.toolBatchDoneFlag = false
 	a.compactionMessagesBefore = 0
+}
+
+// PendingInterrupts 返回当前等待 Resume 的中断点副本。
+func (a *Agent) PendingInterrupts() []InterruptPoint {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return cloneInterruptPoints(a.pendingInterrupts)
+}
+
+// ClearCheckpoint 放弃当前中断并使已有检查点失效。
+// 配置了 Session 时，清理后的状态会立即持久化。
+func (a *Agent) ClearCheckpoint(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("agentkit: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	a.Abort()
+	err := a.discardCheckpoint(ctx)
+	if a.sessionStore != nil {
+		err = errors.Join(err, a.SaveSession(ctx))
+	}
+	return err
+}
+
+func (a *Agent) startFreshRun(ctx context.Context) (context.Context, error) {
+	runCtx, err := a.startRun(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.ensureNoPendingCheckpoint(runCtx); err != nil {
+		a.endRun()
+		return nil, err
+	}
+	return runCtx, nil
 }
 
 // startRun 标记 Agent 开始执行。如果已在执行中，返回错误。
@@ -656,6 +716,7 @@ func (a *Agent) startRun(ctx context.Context) (context.Context, error) {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	a.running = true
+	a.runInterrupted = false
 	a.done = make(chan struct{})
 	a.cancelFn = cancel
 	return runCtx, nil

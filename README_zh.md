@@ -186,6 +186,10 @@ err := agent.Continue(ctx)
 // 从 HITL 中断恢复
 err := agent.Resume(ctx, map[string]any{"interruptID": data})
 
+// 查看或明确放弃等待处理的 HITL 中断
+pending := agent.PendingInterrupts()
+err = agent.ClearCheckpoint(ctx)
+
 // 订阅事件，返回取消订阅函数
 unsubscribe := agent.Subscribe(func(e agentkit.Event) { ... })
 
@@ -220,7 +224,7 @@ state := agent.State()
 agent.Close()
 ```
 
-> `Prompt`、`Send`、`Continue`、`Resume` 互斥执行。可通过 `errors.Is(err, agentkit.ErrAgentRunning)` 判断并发执行错误。
+> `Prompt`、`Send`、`Continue`、`Resume` 互斥执行。可通过 `errors.Is(err, agentkit.ErrAgentRunning)` 判断并发执行错误。发生 HITL 中断后应先调用 `Resume`；在检查点被恢复或清理前，新执行会返回 `agentkit.ErrResumeRequired`，避免未完成的工具操作被悄悄丢弃。
 
 ### 会话管理
 
@@ -250,7 +254,7 @@ saved, err := store.Load(ctx, "user-123")
 err = store.Delete(ctx, "user-123") // 删除不存在的会话也会成功
 ```
 
-两个内置会话存储都会自动提供配套的检查点存储。因此使用文件会话时无需额外配置，Agent 或进程重建后仍可恢复 HITL 中断。不使用 `Session` 时，也可以通过 `agentkit.NewFileCheckpointStore` 和 `Config.CheckPointStore` 单独启用持久化检查点。
+两个内置会话存储都会自动提供配套的检查点存储。因此使用文件会话时无需额外配置，Agent 或进程重建后仍可恢复 HITL 中断。待处理的中断 ID 可通过 `Agent.PendingInterrupts` 和 `Session.PendingInterrupts` 获取；成功 `Resume` 后会消费检查点，`ClearCheckpoint`、`Reset`、`SetHistory` 和删除会话都会让旧检查点失效。不使用 `Session` 时，也可以通过 `agentkit.NewFileCheckpointStore` 和 `Config.CheckPointStore` 单独启用持久化检查点。
 
 测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`；如需自动提供持久化检查点，可额外实现 `agentkit.CheckpointStoreProvider`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。同一个会话 ID 同一时间应只由一个 Agent 写入；内置存储保证并发安全，但不会擅自合并两段分叉的对话。
 

@@ -107,10 +107,14 @@ func cloneEvent(event Event) Event {
 	out := event
 	out.ResponseMeta = cloneResponseMeta(event.ResponseMeta)
 	out.ToolCalls = cloneToolCalls(event.ToolCalls)
-	out.Interrupt = append([]InterruptPoint(nil), event.Interrupt...)
+	out.Interrupt = cloneInterruptPoints(event.Interrupt)
 	if event.Compaction != nil {
 		compaction := *event.Compaction
 		out.Compaction = &compaction
 	}
 	return out
+}
+
+func cloneInterruptPoints(points []InterruptPoint) []InterruptPoint {
+	return append([]InterruptPoint(nil), points...)
 }

@@ -28,20 +28,23 @@ type SessionConfig struct {
 
 // Session 是可持久化的完整对话快照。
 type Session struct {
-	ID        string            `json:"id"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
-	Messages  []*schema.Message `json:"messages"`          // 未删减的完整对话
-	Context   []*schema.Message `json:"context,omitempty"` // 压缩后的模型上下文；nil 表示与 Messages 相同
+	ID                string            `json:"id"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+	Messages          []*schema.Message `json:"messages"`                     // 未删减的完整对话
+	Context           []*schema.Message `json:"context,omitempty"`            // 压缩后的模型上下文；nil 表示与 Messages 相同
+	CheckpointID      string            `json:"checkpoint_id,omitempty"`      // 当前可恢复执行的检查点标识
+	PendingInterrupts []InterruptPoint  `json:"pending_interrupts,omitempty"` // 等待 Resume 的中断点
 }
 
 // SessionInfo 是用于会话列表展示的轻量元数据。
 type SessionInfo struct {
-	ID                  string    `json:"id"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	MessageCount        int       `json:"message_count"`
-	ContextMessageCount int       `json:"context_message_count"`
+	ID                    string    `json:"id"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+	MessageCount          int       `json:"message_count"`
+	ContextMessageCount   int       `json:"context_message_count"`
+	PendingInterruptCount int       `json:"pending_interrupt_count"`
 }
 
 // SessionStore 管理多个持久化会话。
@@ -119,8 +122,16 @@ func (s *MemorySessionStore) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	s.mu.Lock()
+	var checkpointID string
+	if session := s.sessions[id]; session != nil {
+		checkpointID = session.CheckpointID
+	}
 	delete(s.sessions, id)
+	checkpoints := s.checkpoints
 	s.mu.Unlock()
+	if checkpointID != "" && checkpoints != nil {
+		return checkpoints.Delete(ctx, checkpointID)
+	}
 	return nil
 }
 
@@ -173,6 +184,7 @@ func cloneSession(session *Session) *Session {
 	cloned := *session
 	cloned.Messages = cloneHistoryMessages(session.Messages)
 	cloned.Context = cloneHistoryMessages(session.Context)
+	cloned.PendingInterrupts = cloneInterruptPoints(session.PendingInterrupts)
 	return &cloned
 }
 
@@ -194,11 +206,12 @@ func sessionInfo(session *Session) SessionInfo {
 		contextCount = len(session.Messages)
 	}
 	return SessionInfo{
-		ID:                  session.ID,
-		CreatedAt:           session.CreatedAt,
-		UpdatedAt:           session.UpdatedAt,
-		MessageCount:        len(session.Messages),
-		ContextMessageCount: contextCount,
+		ID:                    session.ID,
+		CreatedAt:             session.CreatedAt,
+		UpdatedAt:             session.UpdatedAt,
+		MessageCount:          len(session.Messages),
+		ContextMessageCount:   contextCount,
+		PendingInterruptCount: len(session.PendingInterrupts),
 	}
 }
 

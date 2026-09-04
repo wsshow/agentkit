@@ -186,6 +186,10 @@ err := agent.Continue(ctx)
 // Resume from a HITL interrupt
 err := agent.Resume(ctx, map[string]any{"interruptID": data})
 
+// Inspect or explicitly discard a pending HITL interrupt
+pending := agent.PendingInterrupts()
+err = agent.ClearCheckpoint(ctx)
+
 // Subscribe to events, returns unsubscribe function
 unsubscribe := agent.Subscribe(func(e agentkit.Event) { ... })
 
@@ -220,7 +224,7 @@ state := agent.State()
 agent.Close()
 ```
 
-> `Prompt`, `Send`, `Continue`, and `Resume` are mutually exclusive. Use `errors.Is(err, agentkit.ErrAgentRunning)` to detect a concurrent run.
+> `Prompt`, `Send`, `Continue`, and `Resume` are mutually exclusive. Use `errors.Is(err, agentkit.ErrAgentRunning)` to detect a concurrent run. After a HITL interrupt, start with `Resume`; fresh runs return `agentkit.ErrResumeRequired` until the checkpoint is resumed or cleared, preventing an unfinished tool action from being silently abandoned.
 
 ### Session Management
 
@@ -250,7 +254,7 @@ saved, err := store.Load(ctx, "user-123")
 err = store.Delete(ctx, "user-123") // deleting a missing session also succeeds
 ```
 
-Both built-in session stores automatically provide a matching checkpoint store. A file-backed session can therefore resume a HITL interrupt after the Agent or process is recreated without additional configuration. Without `Session`, configure durable checkpoints directly with `agentkit.NewFileCheckpointStore` and `Config.CheckPointStore`.
+Both built-in session stores automatically provide a matching checkpoint store. A file-backed session can therefore resume a HITL interrupt after the Agent or process is recreated without additional configuration. Pending interrupt IDs are available through `Agent.PendingInterrupts` and `Session.PendingInterrupts`. A successful `Resume` consumes the checkpoint; `ClearCheckpoint`, `Reset`, `SetHistory`, and session deletion invalidate stale checkpoints. Without `Session`, configure durable checkpoints directly with `agentkit.NewFileCheckpointStore` and `Config.CheckPointStore`.
 
 Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend; it may additionally implement `agentkit.CheckpointStoreProvider` to supply durable checkpoints automatically. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Only one Agent should write a given session ID at a time: the built-in stores are concurrency-safe, but they do not merge divergent conversations.
 

@@ -38,7 +38,7 @@ func (a *Agent) persistSession(ctx context.Context, runErr error) error {
 
 // processQueues 处理 steering/follow-up 队列
 func (a *Agent) processQueues(ctx context.Context, err error) error {
-	for err == nil {
+	for err == nil && !a.wasInterrupted() {
 		if msgs := a.drainSteering(); len(msgs) > 0 {
 			for _, m := range msgs {
 				a.state.AddMessage(m)
@@ -89,14 +89,22 @@ func (a *Agent) executeLoop(parentCtx context.Context) error {
 
 // executeResume 执行 HITL 恢复
 func (a *Agent) executeResume(parentCtx context.Context, targets map[string]any) error {
+	a.mu.Lock()
+	waitForTrackedTools := len(a.toolCalls) > 0
+	a.mu.Unlock()
+
 	cancelOpt, cancelAgent := adk.WithCancel()
 	iter, err := a.runner.ResumeWithParams(parentCtx, a.checkPointID, &adk.ResumeParams{
 		Targets: targets,
 	},
 		cancelOpt,
 		adk.WithAfterToolCallsHook(func(ctx context.Context) error {
-			if err := a.waitToolBatch(ctx); err != nil {
-				return err
+			// A recreated Agent has no in-memory batch barrier from the interrupted
+			// process. Eino publishes its resumed tool results after this hook.
+			if waitForTrackedTools {
+				if err := a.waitToolBatch(ctx); err != nil {
+					return err
+				}
 			}
 			if a.hasSteering() {
 				cancelAgent(adk.WithAgentCancelMode(adk.CancelAfterToolCalls))
@@ -198,6 +206,7 @@ func (a *Agent) processAction(agentName string, action *adk.AgentAction) {
 		for _, ic := range action.Interrupted.InterruptContexts {
 			points = append(points, InterruptPoint{ID: ic.ID, Info: ic.Info})
 		}
+		a.markInterrupted(points)
 		a.emtr.Emit(Event{
 			Type:      EventInterrupted,
 			Agent:     agentName,

@@ -21,6 +21,8 @@ func (a *Agent) restoreHistory(history, contextHistory []*schema.Message, compac
 	a.toolBatchDone = nil
 	a.toolBatchDoneFlag = false
 	a.compactionMessagesBefore = 0
+	a.pendingInterrupts = nil
+	a.runInterrupted = false
 	a.mu.Unlock()
 
 	a.state.replaceMessages(stateMessages)

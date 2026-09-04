@@ -115,11 +115,21 @@ func (s *FileSessionStore) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	session, loadErr := s.load(id)
+	if errors.Is(loadErr, ErrSessionNotFound) {
+		loadErr = nil
+	}
 	if err := os.Remove(s.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.mu.Unlock()
 		return fmt.Errorf("agentkit: delete session %q: %w", id, err)
 	}
-	return nil
+	s.mu.Unlock()
+
+	var checkpointErr error
+	if session != nil && session.CheckpointID != "" {
+		checkpointErr = s.checkpoints.Delete(ctx, session.CheckpointID)
+	}
+	return errors.Join(loadErr, checkpointErr)
 }
 
 // List 按更新时间从新到旧列出会话。
