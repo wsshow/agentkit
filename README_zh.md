@@ -14,6 +14,7 @@
 - **流式输出** — 通过 Eino ADK 流式传输实时逐 token 输出
 - **推理模型支持** — 原生支持思考/推理模型（DeepSeek-R1、o1 等），流式输出推理过程
 - **多模态输入** — 通过 `Send()` 发送文本、图片、音频、视频、文件，配套简洁构造函数
+- **会话持久化** — 自动保存和恢复完整对话，内置并发安全的内存与原子文件存储
 - **工具集成** — 接入任何 Eino 兼容工具，自动处理工具调用
 - **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
@@ -131,6 +132,10 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     ModelFailoverConfig: failoverConfig,                              // 可选
     MaxIterations:   20,                                  // 最大 LLM 调用轮次（默认 20）
     CheckPointStore: store,                               // 检查点存储（可选）
+    Session: &agentkit.SessionConfig{                     // 自动恢复/保存（可选）
+        ID: "user-123",
+        Store: sessionStore,
+    },
 })
 defer agent.Close()
 ```
@@ -168,6 +173,12 @@ history := agent.History()
 // 替换完整对话历史，并同步展示状态
 agent.SetHistory(history)
 
+// 获取会话快照；Prompt/Send/Continue/Resume 后会自动保存
+session := agent.Session()
+
+// 在 SetHistory 等手动修改后立即保存
+err := agent.SaveSession(ctx)
+
 // 获取 Agent 状态（消息记录、流式状态）
 state := agent.State()
 
@@ -176,6 +187,36 @@ agent.Close()
 ```
 
 > `Prompt`、`Continue`、`Resume` 互斥执行 — 在另一个正在运行时调用会返回错误。
+
+### 会话管理
+
+只需配置会话 ID 和存储，`New` 会自动恢复已有对话，每次运行结束（包括模型报错或取消）都会自动保存：
+
+```go
+store, err := agentkit.NewFileSessionStore("./data/sessions")
+if err != nil {
+    log.Fatal(err)
+}
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "assistant",
+    Model: chatModel,
+    Session: &agentkit.SessionConfig{
+        ID:    "user-123",
+        Store: store,
+    },
+})
+```
+
+文件存储使用安全的哈希文件名和“临时文件 + 原子替换”，避免非法会话 ID 造成路径穿越，也避免进程异常时留下半个 JSON。管理会话可直接使用存储：
+
+```go
+sessions, err := store.List(ctx)
+saved, err := store.Load(ctx, "user-123")
+err = store.Delete(ctx, "user-123") // 删除不存在的会话也会成功
+```
+
+测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。同一个会话 ID 同一时间应只由一个 Agent 写入；内置存储保证并发安全，但不会擅自合并两段分叉的对话。
 
 ### 集成测试
 
@@ -367,6 +408,7 @@ AgentKit 提供类型别名，消费者无需直接导入 eino 包：
 - **[simple](examples/simple/)** — 最简多轮对话（~60 行）
 - **[tools](examples/tools/)** — 工具调用和进度事件
 - **[history](examples/history/)** — 导出并恢复对话历史
+- **[session](examples/session/)** — 自动持久化并跨进程恢复会话
 - **[queues](examples/queues/)** — 后续消息和转向队列
 - **[hitl](examples/hitl/)** — 人机协作中断和恢复
 - **[multimodal](examples/multimodal/)** — 文本和图片输入

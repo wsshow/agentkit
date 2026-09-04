@@ -4,9 +4,12 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 func TestNewValidatesConfig(t *testing.T) {
+	model := NewMockChatModel()
 	tests := []struct {
 		name string
 		ctx  context.Context
@@ -37,6 +40,34 @@ func TestNewValidatesConfig(t *testing.T) {
 				MaxIterations: -1,
 			},
 			want: "max iterations must not be negative",
+		},
+		{
+			name: "empty session ID",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:   model,
+				Session: &SessionConfig{Store: NewMemorySessionStore()},
+			},
+			want: "session ID is required",
+		},
+		{
+			name: "nil session store",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:   model,
+				Session: &SessionConfig{ID: "session-1"},
+			},
+			want: "session store is required",
+		},
+		{
+			name: "history and session",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:   model,
+				History: []*schema.Message{},
+				Session: &SessionConfig{ID: "session-1", Store: NewMemorySessionStore()},
+			},
+			want: "history and session cannot be configured together",
 		},
 	}
 

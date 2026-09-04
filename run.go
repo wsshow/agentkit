@@ -21,9 +21,21 @@ func (a *Agent) run(ctx context.Context, inputs []Message) error {
 
 	err := a.executeLoop(ctx)
 	err = a.processQueues(ctx, err)
+	err = a.persistSession(ctx, err)
 
 	a.emtr.Emit(Event{Type: EventAgentEnd, Agent: a.name})
 	return err
+}
+
+func (a *Agent) persistSession(ctx context.Context, runErr error) error {
+	if a.sessionStore == nil {
+		return runErr
+	}
+	if err := a.SaveSession(context.WithoutCancel(ctx)); err != nil {
+		a.emtr.Emit(Event{Type: EventError, Agent: a.name, Error: err})
+		return errors.Join(runErr, err)
+	}
+	return runErr
 }
 
 // processQueues 处理 steering/follow-up 队列

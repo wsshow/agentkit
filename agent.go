@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/compose"
@@ -69,6 +70,7 @@ type Config struct {
 	ModelFailoverConfig *ModelFailoverConfig       // 模型失败转移配置（可选）
 	MaxIterations       int                        // 默认 20
 	CheckPointStore     compose.CheckPointStore    // 自定义 CheckPoint 存储，默认使用内存存储
+	Session             *SessionConfig             // 自动恢复并保存完整对话（可选）
 }
 
 // Agent 提供事件流驱动的交互能力。
@@ -93,6 +95,12 @@ type Agent struct {
 	toolCalls         map[string]toolCallInfo
 	toolBatchDone     chan struct{}
 	toolBatchDoneFlag bool
+
+	sessionStore     SessionStore
+	sessionID        string
+	sessionCreatedAt time.Time
+	sessionUpdatedAt time.Time
+	sessionSaveMu    sync.Mutex
 }
 
 type toolCallInfo struct {
@@ -108,6 +116,20 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		return nil, err
 	}
 
+	history := cfg.History
+	var loadedSession *Session
+	if cfg.Session != nil {
+		var err error
+		loadedSession, err = cfg.Session.Store.Load(ctx, cfg.Session.ID)
+		if errors.Is(err, ErrSessionNotFound) {
+			now := time.Now().UTC()
+			loadedSession = &Session{ID: cfg.Session.ID, CreatedAt: now, UpdatedAt: now}
+		} else if err != nil {
+			return nil, fmt.Errorf("agentkit: load session %q: %w", cfg.Session.ID, err)
+		}
+		history = loadedSession.Messages
+	}
+
 	maxIter := cfg.MaxIterations
 	if maxIter == 0 {
 		maxIter = 20
@@ -118,16 +140,27 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		desc = cfg.Name
 	}
 
+	checkPointID := cfg.Name + "/" + uuid.New().String()
+	if loadedSession != nil {
+		checkPointID = "agentkit/session/" + sessionStorageKey(cfg.Name+"\x00"+loadedSession.ID)
+	}
+
 	a := &Agent{
 		name:         cfg.Name,
 		state:        newState(),
 		emtr:         newEmitter(),
-		checkPointID: cfg.Name + "/" + uuid.New().String(),
+		checkPointID: checkPointID,
 		steeringMode: QueueModeOneAtATime,
 		followUpMode: QueueModeOneAtATime,
 		toolCalls:    make(map[string]toolCallInfo),
 	}
-	a.replaceHistory(cfg.History)
+	if loadedSession != nil {
+		a.sessionStore = cfg.Session.Store
+		a.sessionID = loadedSession.ID
+		a.sessionCreatedAt = loadedSession.CreatedAt
+		a.sessionUpdatedAt = loadedSession.UpdatedAt
+	}
+	a.replaceHistory(history)
 
 	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+1)
 	handlers = append(handlers, cfg.Handlers...)
@@ -187,6 +220,17 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 	}
 	if cfg.MaxIterations < 0 {
 		return fmt.Errorf("agentkit: max iterations must not be negative: %d", cfg.MaxIterations)
+	}
+	if cfg.Session != nil {
+		if cfg.Session.ID == "" {
+			return errors.New("agentkit: session ID is required")
+		}
+		if cfg.Session.Store == nil {
+			return errors.New("agentkit: session store is required")
+		}
+		if cfg.History != nil {
+			return errors.New("agentkit: history and session cannot be configured together")
+		}
 	}
 	return nil
 }
@@ -358,6 +402,7 @@ func (a *Agent) Resume(ctx context.Context, targets map[string]any) error {
 
 	err := a.executeResume(ctx, targets)
 	err = a.processQueues(ctx, err)
+	err = a.persistSession(ctx, err)
 
 	a.emtr.Emit(Event{Type: EventAgentEnd, Agent: a.name})
 	return err
@@ -404,6 +449,63 @@ func (a *Agent) History() []*schema.Message {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return cloneHistoryMessages(a.history)
+}
+
+// Session 获取当前会话快照。未配置会话持久化时返回 nil。
+func (a *Agent) Session() *Session {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.sessionStore == nil {
+		return nil
+	}
+	return &Session{
+		ID:        a.sessionID,
+		CreatedAt: a.sessionCreatedAt,
+		UpdatedAt: a.sessionUpdatedAt,
+		Messages:  cloneHistoryMessages(a.history),
+	}
+}
+
+// SaveSession 立即保存当前会话快照。
+// Prompt、Send、Continue 和 Resume 结束时会自动调用它。
+func (a *Agent) SaveSession(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("agentkit: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	a.sessionSaveMu.Lock()
+	defer a.sessionSaveMu.Unlock()
+
+	a.mu.Lock()
+	if a.sessionStore == nil {
+		a.mu.Unlock()
+		return ErrSessionDisabled
+	}
+	now := time.Now().UTC()
+	createdAt := a.sessionCreatedAt
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	session := &Session{
+		ID:        a.sessionID,
+		CreatedAt: createdAt,
+		UpdatedAt: now,
+		Messages:  cloneHistoryMessages(a.history),
+	}
+	store := a.sessionStore
+	a.mu.Unlock()
+
+	if err := store.Save(ctx, session); err != nil {
+		return fmt.Errorf("agentkit: save session %q: %w", session.ID, err)
+	}
+
+	a.mu.Lock()
+	a.sessionCreatedAt = createdAt
+	a.sessionUpdatedAt = now
+	a.mu.Unlock()
+	return nil
 }
 
 // SetHistory 替换完整对话历史，并同步展示状态。

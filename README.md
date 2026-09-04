@@ -14,6 +14,7 @@ Inspired by [pi-agent-core](https://github.com/badlogic/pi-mono/tree/main/packag
 - **Streaming support** — Real-time token-by-token output via Eino ADK streaming
 - **Reasoning model support** — First-class support for thinking/reasoning models (DeepSeek-R1, o1, etc.) with streaming reasoning output
 - **Multimodal input** — Send text, images, audio, video, and files via `Send()` with ergonomic constructors
+- **Session persistence** — Automatically save and restore complete conversations with built-in concurrent memory and atomic file stores
 - **Tool integration** — Plug in any Eino-compatible tool with automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
@@ -131,6 +132,10 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     ModelFailoverConfig: failoverConfig,                              // optional
     MaxIterations:   20,                                  // max LLM call cycles (default: 20)
     CheckPointStore: store,                               // checkpoint store (optional)
+    Session: &agentkit.SessionConfig{                     // automatic restore/save (optional)
+        ID: "user-123",
+        Store: sessionStore,
+    },
 })
 defer agent.Close()
 ```
@@ -168,6 +173,12 @@ history := agent.History()
 // Replace full conversation history and sync display state
 agent.SetHistory(history)
 
+// Get a session snapshot; Prompt/Send/Continue/Resume save automatically
+session := agent.Session()
+
+// Save immediately after a manual change such as SetHistory
+err := agent.SaveSession(ctx)
+
 // Get agent state (message records, streaming status)
 state := agent.State()
 
@@ -176,6 +187,36 @@ agent.Close()
 ```
 
 > `Prompt`, `Continue`, and `Resume` are mutually exclusive — calling one while another is running returns an error.
+
+### Session Management
+
+Configure a session ID and store. `New` restores an existing conversation, and every run is saved automatically—even when the model fails or the run is canceled:
+
+```go
+store, err := agentkit.NewFileSessionStore("./data/sessions")
+if err != nil {
+    log.Fatal(err)
+}
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "assistant",
+    Model: chatModel,
+    Session: &agentkit.SessionConfig{
+        ID:    "user-123",
+        Store: store,
+    },
+})
+```
+
+The file store uses safe hashed file names and atomic replacement, preventing path traversal through session IDs and half-written JSON after a crash. Manage sessions directly through the store:
+
+```go
+sessions, err := store.List(ctx)
+saved, err := store.Load(ctx, "user-123")
+err = store.Delete(ctx, "user-123") // deleting a missing session also succeeds
+```
+
+Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Only one Agent should write a given session ID at a time: the built-in stores are concurrency-safe, but they do not merge divergent conversations.
 
 ### Integration Tests
 
@@ -367,6 +408,7 @@ See the [examples](examples/) directory:
 - **[simple](examples/simple/)** — Minimal multi-turn conversation (~60 lines)
 - **[tools](examples/tools/)** — Tool calls with progress events
 - **[history](examples/history/)** — Export and restore conversation history
+- **[session](examples/session/)** — Automatically persist and restore sessions across processes
 - **[queues](examples/queues/)** — Follow-up and steering queues
 - **[hitl](examples/hitl/)** — Human-in-the-loop interrupt and resume
 - **[multimodal](examples/multimodal/)** — Text and image inputs
