@@ -215,7 +215,7 @@ state := agent.State()
 agent.Close()
 ```
 
-> `Prompt`、`Continue`、`Resume` 互斥执行 — 在另一个正在运行时调用会返回错误。
+> `Prompt`、`Send`、`Continue`、`Resume` 互斥执行。可通过 `errors.Is(err, agentkit.ErrAgentRunning)` 判断并发执行错误。
 
 ### 会话管理
 

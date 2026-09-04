@@ -215,7 +215,7 @@ state := agent.State()
 agent.Close()
 ```
 
-> `Prompt`, `Continue`, and `Resume` are mutually exclusive — calling one while another is running returns an error.
+> `Prompt`, `Send`, `Continue`, and `Resume` are mutually exclusive. Use `errors.Is(err, agentkit.ErrAgentRunning)` to detect a concurrent run.
 
 ### Session Management
 

@@ -1056,8 +1056,8 @@ func TestAgentRunningRejectsConcurrentPrompt(t *testing.T) {
 	}
 
 	err = agent.Prompt(ctx, "并发输入")
-	if err == nil || !strings.Contains(err.Error(), "already running") {
-		t.Fatalf("concurrent Prompt() error = %v", err)
+	if !errors.Is(err, ErrAgentRunning) {
+		t.Fatalf("concurrent Prompt() error = %v, want ErrAgentRunning", err)
 	}
 
 	close(release)

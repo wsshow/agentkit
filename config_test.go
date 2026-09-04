@@ -235,3 +235,20 @@ func TestAgentRunMethodsValidateContextBeforeChangingState(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentContinueReturnsStateErrors(t *testing.T) {
+	agent, err := New(context.Background(), &Config{Model: NewMockChatModel()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+
+	if err := agent.Continue(context.Background()); !errors.Is(err, ErrNoMessagesToContinue) {
+		t.Fatalf("Continue() error = %v, want ErrNoMessagesToContinue", err)
+	}
+
+	agent.SetHistory([]*schema.Message{schema.AssistantMessage("done", nil)})
+	if err := agent.Continue(context.Background()); !errors.Is(err, ErrCannotContinue) {
+		t.Fatalf("Continue() error = %v, want ErrCannotContinue", err)
+	}
+}

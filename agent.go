@@ -26,8 +26,16 @@ type emitterCtxKey struct{}
 type agentNameCtxKey struct{}
 type agentCtxKey struct{}
 
-// ErrAgentClosed 表示 Agent 已关闭，不能再执行新的请求。
-var ErrAgentClosed = errors.New("agentkit: agent is closed")
+var (
+	// ErrAgentClosed 表示 Agent 已关闭，不能再执行新的请求。
+	ErrAgentClosed = errors.New("agentkit: agent is closed")
+	// ErrAgentRunning 表示 Agent 正在执行另一个请求。
+	ErrAgentRunning = errors.New("agent is already running")
+	// ErrNoMessagesToContinue 表示 Agent 没有可继续执行的历史消息。
+	ErrNoMessagesToContinue = errors.New("no messages in state to continue from")
+	// ErrCannotContinue 表示最后一条消息已由助手完成，不能继续执行。
+	ErrCannotContinue = errors.New("cannot continue from assistant message, last message must be user or tool result")
+)
 
 // EmitToolUpdate 在工具执行中发送进度更新事件。
 // 工具通过 context 获取 Emitter 并发送 tool_update 事件：
@@ -350,10 +358,10 @@ func (a *Agent) Continue(ctx context.Context) error {
 	a.mu.Unlock()
 
 	if histLen == 0 {
-		return errors.New("no messages in state to continue from")
+		return ErrNoMessagesToContinue
 	}
 	if lastRole == schema.Assistant {
-		return errors.New("cannot continue from assistant message, last message must be user or tool result")
+		return ErrCannotContinue
 	}
 	return a.run(runCtx, nil)
 }
@@ -632,7 +640,7 @@ func (a *Agent) startRun(ctx context.Context) (context.Context, error) {
 		return nil, ErrAgentClosed
 	}
 	if a.running {
-		return nil, errors.New("agent is already running")
+		return nil, ErrAgentRunning
 	}
 	if ctx == nil {
 		return nil, errors.New("agentkit: context is required")
