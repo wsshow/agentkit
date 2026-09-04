@@ -17,6 +17,7 @@ Inspired by [pi-agent-core](https://github.com/badlogic/pi-mono/tree/main/packag
 - **Session persistence** — Automatically save and restore complete conversations with built-in concurrent memory and atomic file stores
 - **Automatic context compaction** — Summarize contexts over token or message limits while preserving full conversation history
 - **On-demand skills** — Load reusable `SKILL.md` instructions from local directories or a custom backend
+- **Managed MCP connections** — Connect stdio, SSE, and Streamable HTTP servers with discovery, reconnection, filtering, and cleanup
 - **Tool integration** — Plug in any Eino-compatible tool with automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
@@ -146,6 +147,13 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     },
     Skills: &agentkit.SkillsConfig{                       // on-demand SKILL.md loading (optional)
         Paths: []string{"./skills"},
+    },
+    MCP: &agentkit.MCPConfig{                             // managed MCP servers (optional)
+        Servers: []agentkit.MCPServerConfig{{
+            Name:      "search",
+            Transport: agentkit.MCPTransportStreamableHTTP,
+            URL:       "https://mcp.example.com/mcp",
+        }},
     },
 })
 defer agent.Close()
@@ -293,6 +301,55 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 `Paths` accepts a `SKILL.md` file, one skill directory, or a collection directory whose immediate child directories contain skills. Files are reloaded on every list or load operation, so edits take effect without rebuilding the agent. Duplicate names, malformed frontmatter, missing instructions, and files over 1 MiB fail with an explicit error.
 
 For programmatic or remote storage, pass `Backend` instead of `Paths`. AgentKit includes a concurrency-safe `NewMemorySkillBackend` and exposes the small `SkillBackend` interface for custom implementations. The simple configuration intentionally supports inline skills only; skills requesting `context`, `agent`, or `model` overrides fail fast. Applications that need Eino's advanced fork/model routing can install a fully configured Eino skill middleware through `Handlers`.
+
+### MCP Management
+
+AgentKit can connect MCP servers, discover their tools, expose them to the model, reconnect after connection-level failures, and close every session with the agent:
+
+```go
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "assistant",
+    Model: chatModel,
+    MCP: &agentkit.MCPConfig{
+        Servers: []agentkit.MCPServerConfig{
+            {
+                Name:       "search",
+                Transport:  agentkit.MCPTransportStreamableHTTP,
+                URL:        "https://mcp.example.com/mcp",
+                Headers:    map[string]string{"Authorization": "Bearer " + token},
+                ToolNames:  []string{"search", "fetch"}, // optional allowlist
+                ToolPrefix: "search__",                  // optional namespace
+            },
+        },
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer agent.Close() // also closes all MCP sessions
+```
+
+For a local stdio server:
+
+```go
+MCP: &agentkit.MCPConfig{
+    Servers: []agentkit.MCPServerConfig{{
+        Name:       "filesystem",
+        Transport:  agentkit.MCPTransportStdio,
+        Command:    "filesystem-mcp",
+        Args:       []string{"--root", workspace},
+        Env:        map[string]string{"LOG_LEVEL": "warn"}, // merged with the process environment
+        WorkingDir: workspace,
+        ToolPrefix: "fs__",
+    }},
+},
+```
+
+`MCPTransportSSE` is available for legacy SSE servers. Tool lists are fully paginated once during `New`; recreate the agent to pick up later additions or removals. Exposed tool names must be unique, so configure `ToolPrefix` when servers—or local tools—use the same name. A requested `ToolNames` entry that the server does not provide is an initialization error instead of a silent omission.
+
+To keep a single response from exhausting model context, MCP results default to `DefaultMCPMaxResultChars` (100,000 characters) and tool descriptions to `DefaultMCPMaxDescriptionChars` (4,000). Set either `MCPConfig` limit to a positive value to customize it or `-1` to disable it. Static headers are copied during initialization; use a custom `HTTPClient` with an authentication `RoundTripper` when credentials must refresh dynamically, and avoid hard-coding secrets.
+
+Advanced callers can provide an already-connected `MCPClientSession` instead of transport settings. AgentKit takes ownership of that session and closes it on initialization failure or `Agent.Close`.
 
 ### Integration Tests
 
@@ -487,6 +544,7 @@ See the [examples](examples/) directory:
 - **[session](examples/session/)** — Automatically persist and restore sessions across processes
 - **[compaction](examples/compaction/)** — Automatically compact long conversation contexts
 - **[skills](examples/skills/)** — Load reusable instructions from local `SKILL.md` files
+- **[mcp](examples/mcp/)** — Connect and call a Streamable HTTP MCP server
 - **[queues](examples/queues/)** — Follow-up and steering queues
 - **[hitl](examples/hitl/)** — Human-in-the-loop interrupt and resume
 - **[multimodal](examples/multimodal/)** — Text and image inputs

@@ -17,6 +17,7 @@
 - **会话持久化** — 自动保存和恢复完整对话，内置并发安全的内存与原子文件存储
 - **自动上下文压缩** — 超过 token 或消息阈值时自动摘要，完整历史与模型上下文分离保存
 - **按需技能** — 从本地目录或自定义后端加载可复用的 `SKILL.md` 指令
+- **MCP 连接管理** — 连接 stdio、SSE、Streamable HTTP 服务器，自动发现、重连、筛选并释放资源
 - **工具集成** — 接入任何 Eino 兼容工具，自动处理工具调用
 - **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
@@ -146,6 +147,13 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     },
     Skills: &agentkit.SkillsConfig{                       // 按需加载 SKILL.md（可选）
         Paths: []string{"./skills"},
+    },
+    MCP: &agentkit.MCPConfig{                             // 托管 MCP 服务器（可选）
+        Servers: []agentkit.MCPServerConfig{{
+            Name:      "search",
+            Transport: agentkit.MCPTransportStreamableHTTP,
+            URL:       "https://mcp.example.com/mcp",
+        }},
     },
 })
 defer agent.Close()
@@ -293,6 +301,55 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 `Paths` 可以指向一个 `SKILL.md` 文件、单个技能目录，或由一级技能子目录组成的集合目录。每次列出或加载技能时都会重新读取文件，因此修改后无需重建 Agent。技能重名、frontmatter 格式错误、指令为空或文件超过 1 MiB 都会返回明确错误。
 
 如需使用程序化或远端存储，用 `Backend` 代替 `Paths`。AgentKit 内置并发安全的 `NewMemorySkillBackend`，也暴露了精简的 `SkillBackend` 接口供自定义实现。简易配置有意只支持内联技能；包含 `context`、`agent` 或 `model` 覆盖的技能会尽早报错。需要 Eino 高级 fork/模型路由时，可通过 `Handlers` 安装完整配置的 Eino 技能中间件。
+
+### MCP 管理
+
+AgentKit 可以连接 MCP 服务器、发现并向模型暴露工具，在连接级故障后自动重连，并随 Agent 一起关闭所有会话：
+
+```go
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "assistant",
+    Model: chatModel,
+    MCP: &agentkit.MCPConfig{
+        Servers: []agentkit.MCPServerConfig{
+            {
+                Name:       "search",
+                Transport:  agentkit.MCPTransportStreamableHTTP,
+                URL:        "https://mcp.example.com/mcp",
+                Headers:    map[string]string{"Authorization": "Bearer " + token},
+                ToolNames:  []string{"search", "fetch"}, // 可选白名单
+                ToolPrefix: "search__",                  // 可选命名空间
+            },
+        },
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer agent.Close() // 同时关闭所有 MCP 会话
+```
+
+本地 stdio 服务器的配置如下：
+
+```go
+MCP: &agentkit.MCPConfig{
+    Servers: []agentkit.MCPServerConfig{{
+        Name:       "filesystem",
+        Transport:  agentkit.MCPTransportStdio,
+        Command:    "filesystem-mcp",
+        Args:       []string{"--root", workspace},
+        Env:        map[string]string{"LOG_LEVEL": "warn"}, // 与当前进程环境合并
+        WorkingDir: workspace,
+        ToolPrefix: "fs__",
+    }},
+},
+```
+
+旧式 SSE 服务器可使用 `MCPTransportSSE`。`New` 会完整读取所有分页工具一次；服务器之后增删工具时需重建 Agent。暴露给模型的工具名必须唯一，因此当多个服务器或本地工具重名时应设置 `ToolPrefix`。`ToolNames` 中服务器未提供的名字会直接导致初始化失败，不会静默遗漏。
+
+为避免单次响应耗尽模型上下文，MCP 结果默认最多保留 `DefaultMCPMaxResultChars`（100,000 个字符），工具描述最多保留 `DefaultMCPMaxDescriptionChars`（4,000 个字符）。在 `MCPConfig` 中将对应限制设为正数可自定义，设为 `-1` 可关闭限制。静态请求头会在初始化时复制；如果凭证需要动态刷新，请传入带认证 `RoundTripper` 的自定义 `HTTPClient`，并避免在代码中硬编码密钥。
+
+高级场景可以用已连接的 `MCPClientSession` 代替传输配置。AgentKit 会取得该会话的所有权，并在初始化失败或 `Agent.Close` 时关闭它。
 
 ### 集成测试
 
@@ -487,6 +544,7 @@ AgentKit 提供类型别名，消费者无需直接导入 eino 包：
 - **[session](examples/session/)** — 自动持久化并跨进程恢复会话
 - **[compaction](examples/compaction/)** — 自动压缩长对话上下文
 - **[skills](examples/skills/)** — 从本地 `SKILL.md` 文件加载可复用指令
+- **[mcp](examples/mcp/)** — 连接并调用 Streamable HTTP MCP 服务器
 - **[queues](examples/queues/)** — 后续消息和转向队列
 - **[hitl](examples/hitl/)** — 人机协作中断和恢复
 - **[multimodal](examples/multimodal/)** — 文本和图片输入

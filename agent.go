@@ -76,6 +76,7 @@ type Config struct {
 	Session             *SessionConfig             // 自动恢复并保存完整对话（可选）
 	Compaction          *CompactionConfig          // 自动上下文压缩（可选）
 	Skills              *SkillsConfig              // 按需加载 SKILL.md（可选）
+	MCP                 *MCPConfig                 // 自动连接并管理 MCP 服务器（可选）
 }
 
 // Agent 提供事件流驱动的交互能力。
@@ -110,6 +111,10 @@ type Agent struct {
 	sessionCreatedAt time.Time
 	sessionUpdatedAt time.Time
 	sessionSaveMu    sync.Mutex
+
+	mcpConnections []managedMCPConnection
+	mcpCloseOnce   sync.Once
+	mcpCloseErr    error
 }
 
 type toolCallInfo struct {
@@ -198,6 +203,20 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		agent:                        a,
 	})
 
+	tools := append([]Tool(nil), cfg.Tools...)
+	var mcpConnections []managedMCPConnection
+	if cfg.MCP != nil {
+		mcpTools, connections, err := connectMCP(ctx, cfg.MCP)
+		if err != nil {
+			return nil, err
+		}
+		mcpConnections = connections
+		tools = append(tools, mcpTools...)
+		if err := validateCombinedToolNames(ctx, tools, cfg.Skills); err != nil {
+			return nil, errors.Join(err, closeMCPConnections(mcpConnections))
+		}
+	}
+
 	agentCfg := &adk.ChatModelAgentConfig{
 		Name:                cfg.Name,
 		Description:         desc,
@@ -209,17 +228,17 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		ModelFailoverConfig: cfg.ModelFailoverConfig,
 	}
 
-	if len(cfg.Tools) > 0 {
+	if len(tools) > 0 {
 		agentCfg.ToolsConfig = adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: cfg.Tools,
+				Tools: tools,
 			},
 		}
 	}
 
 	adkAgent, err := adk.NewChatModelAgent(ctx, agentCfg)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
 	}
 
 	store := cfg.CheckPointStore
@@ -234,6 +253,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	})
 
 	a.runner = runner
+	a.mcpConnections = mcpConnections
 	return a, nil
 }
 
@@ -265,6 +285,9 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 		return err
 	}
 	if err := validateSkillsConfig(cfg.Skills); err != nil {
+		return err
+	}
+	if err := validateMCPConfig(cfg.MCP); err != nil {
 		return err
 	}
 	return nil
@@ -470,7 +493,10 @@ func (a *Agent) Close() error {
 	a.closed = true
 	a.mu.Unlock()
 	a.Abort()
-	return nil
+	a.mcpCloseOnce.Do(func() {
+		a.mcpCloseErr = closeMCPConnections(a.mcpConnections)
+	})
+	return a.mcpCloseErr
 }
 
 // State 获取当前状态
