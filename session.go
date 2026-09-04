@@ -31,15 +31,17 @@ type Session struct {
 	ID        string            `json:"id"`
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
-	Messages  []*schema.Message `json:"messages"`
+	Messages  []*schema.Message `json:"messages"`          // 未删减的完整对话
+	Context   []*schema.Message `json:"context,omitempty"` // 压缩后的模型上下文；nil 表示与 Messages 相同
 }
 
 // SessionInfo 是用于会话列表展示的轻量元数据。
 type SessionInfo struct {
-	ID           string    `json:"id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	MessageCount int       `json:"message_count"`
+	ID                  string    `json:"id"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	MessageCount        int       `json:"message_count"`
+	ContextMessageCount int       `json:"context_message_count"`
 }
 
 // SessionStore 管理多个持久化会话。
@@ -153,6 +155,7 @@ func cloneSession(session *Session) *Session {
 	}
 	cloned := *session
 	cloned.Messages = cloneHistoryMessages(session.Messages)
+	cloned.Context = cloneHistoryMessages(session.Context)
 	return &cloned
 }
 
@@ -169,11 +172,16 @@ func normalizedSession(session *Session) *Session {
 }
 
 func sessionInfo(session *Session) SessionInfo {
+	contextCount := len(session.Context)
+	if session.Context == nil {
+		contextCount = len(session.Messages)
+	}
 	return SessionInfo{
-		ID:           session.ID,
-		CreatedAt:    session.CreatedAt,
-		UpdatedAt:    session.UpdatedAt,
-		MessageCount: len(session.Messages),
+		ID:                  session.ID,
+		CreatedAt:           session.CreatedAt,
+		UpdatedAt:           session.UpdatedAt,
+		MessageCount:        len(session.Messages),
+		ContextMessageCount: contextCount,
 	}
 }
 

@@ -82,6 +82,7 @@ func TestFileSessionStoreRoundTripAndSafeFileName(t *testing.T) {
 			schema.UserMessage("hello"),
 			schema.AssistantMessage("world", nil),
 		},
+		Context: []*schema.Message{schema.UserMessage("summary")},
 	}
 	if err := store.Save(ctx, session); err != nil {
 		t.Fatalf("Save() error = %v", err)
@@ -115,7 +116,7 @@ func TestFileSessionStoreRoundTripAndSafeFileName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if loaded.ID != session.ID || len(loaded.Messages) != 2 || loaded.Messages[1].Content != "world" {
+	if loaded.ID != session.ID || len(loaded.Messages) != 2 || loaded.Messages[1].Content != "world" || len(loaded.Context) != 1 {
 		t.Fatalf("loaded session = %#v", loaded)
 	}
 	if loaded.Messages[0].Content != "hello" {
@@ -125,7 +126,7 @@ func TestFileSessionStoreRoundTripAndSafeFileName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(infos) != 1 || infos[0].ID != session.ID || infos[0].MessageCount != 2 {
+	if len(infos) != 1 || infos[0].ID != session.ID || infos[0].MessageCount != 2 || infos[0].ContextMessageCount != 1 {
 		t.Fatalf("session infos = %#v", infos)
 	}
 

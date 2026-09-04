@@ -69,6 +69,33 @@ func TestNewValidatesConfig(t *testing.T) {
 			},
 			want: "history and session cannot be configured together",
 		},
+		{
+			name: "negative compaction tokens",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:      model,
+				Compaction: &CompactionConfig{MaxTokens: -1},
+			},
+			want: "compaction max tokens must not be negative",
+		},
+		{
+			name: "negative compaction messages",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:      model,
+				Compaction: &CompactionConfig{MaxMessages: -1},
+			},
+			want: "compaction max messages must not be negative",
+		},
+		{
+			name: "negative retained turns",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:      model,
+				Compaction: &CompactionConfig{KeepRecentTurns: -1},
+			},
+			want: "compaction keep recent turns must not be negative",
+		},
 	}
 
 	for _, tt := range tests {

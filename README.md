@@ -15,6 +15,7 @@ Inspired by [pi-agent-core](https://github.com/badlogic/pi-mono/tree/main/packag
 - **Reasoning model support** — First-class support for thinking/reasoning models (DeepSeek-R1, o1, etc.) with streaming reasoning output
 - **Multimodal input** — Send text, images, audio, video, and files via `Send()` with ergonomic constructors
 - **Session persistence** — Automatically save and restore complete conversations with built-in concurrent memory and atomic file stores
+- **Automatic context compaction** — Summarize contexts over token or message limits while preserving full conversation history
 - **Tool integration** — Plug in any Eino-compatible tool with automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
@@ -92,6 +93,8 @@ func main() {
 | `EventTurnEnd`        | Turn complete after the assistant message and tool results                         |
 | `EventTransfer`       | Agent transfer (multi-agent)                                                       |
 | `EventInterrupted`    | HITL interrupt (`Event.Interrupt`)                                                 |
+| `EventCompactionStart` | Automatic context compaction started (`Event.Compaction.MessagesBefore`)          |
+| `EventCompactionEnd`  | Automatic context compaction completed (`Event.Compaction`)                       |
 | `EventAgentEnd`       | Agent processing complete                                                          |
 | `EventError`          | Error occurred (`Event.Error`)                                                     |
 
@@ -111,6 +114,7 @@ type Event struct {
     ToolName         string           // tool name (tool_update / tool_end)
     ToolArguments    string           // tool arguments (tool_update / tool_end)
     Interrupt        []InterruptPoint // interrupt points (interrupted)
+    Compaction       *CompactionInfo  // context message counts before/after compaction
     Error            error            // error details (error)
 }
 ```
@@ -126,7 +130,6 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     SystemPrompt:    "System instructions",
     Model:           chatModel,                          // agentkit.ChatModel
     Tools:           []agentkit.Tool{myTool},             // optional
-    History:         savedHistory,                        // optional
     Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // optional
     ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // optional
     ModelFailoverConfig: failoverConfig,                              // optional
@@ -136,9 +139,15 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
         ID: "user-123",
         Store: sessionStore,
     },
+    Compaction: &agentkit.CompactionConfig{               // automatic context compaction (optional)
+        MaxTokens: 80_000,
+        KeepRecentTurns: 2,
+    },
 })
 defer agent.Close()
 ```
+
+For manual history restoration, use `History: savedHistory` instead of `Session`; the two options are mutually exclusive.
 
 ### Core Methods
 
@@ -169,6 +178,9 @@ agent.Reset()
 
 // Get full conversation history for debugging or persistence (returns a copy)
 history := agent.History()
+
+// Get the context actually sent to the model (same as History before compaction)
+contextHistory := agent.ContextHistory()
 
 // Replace full conversation history and sync display state
 agent.SetHistory(history)
@@ -217,6 +229,31 @@ err = store.Delete(ctx, "user-123") // deleting a missing session also succeeds
 ```
 
 Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Only one Agent should write a given session ID at a time: the built-in stores are concurrency-safe, but they do not merge divergent conversations.
+
+### Automatic Context Compaction
+
+Enable `Compaction` to summarize context after a configured limit while preserving the most recent user turns verbatim:
+
+```go
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "assistant",
+    Model: chatModel,
+    Compaction: &agentkit.CompactionConfig{
+        MaxTokens:       80_000, // keep below the model's context window
+        MaxMessages:     100,    // optional; either limit can trigger
+        KeepRecentTurns: 2,      // default: 1
+        Model:           summaryModel, // optional; defaults to the main model
+    },
+})
+```
+
+The two history views have distinct responsibilities:
+
+- `History()` always returns the full, unabridged conversation for UI, auditing, and export.
+- `ContextHistory()` returns the compacted context actually sent to the model.
+- With `Session` configured, both are persisted so a restart does not accidentally restore the full history into the model context.
+
+With no explicit limit, compaction starts above the estimated `DefaultCompactionMaxTokens` (100,000). Summary errors are returned normally and never replace the original context. Subscribe to `EventCompactionStart` and `EventCompactionEnd` to show progress.
 
 ### Integration Tests
 
@@ -409,6 +446,7 @@ See the [examples](examples/) directory:
 - **[tools](examples/tools/)** — Tool calls with progress events
 - **[history](examples/history/)** — Export and restore conversation history
 - **[session](examples/session/)** — Automatically persist and restore sessions across processes
+- **[compaction](examples/compaction/)** — Automatically compact long conversation contexts
 - **[queues](examples/queues/)** — Follow-up and steering queues
 - **[hitl](examples/hitl/)** — Human-in-the-loop interrupt and resume
 - **[multimodal](examples/multimodal/)** — Text and image inputs

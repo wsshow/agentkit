@@ -71,6 +71,7 @@ type Config struct {
 	MaxIterations       int                        // 默认 20
 	CheckPointStore     compose.CheckPointStore    // 自定义 CheckPoint 存储，默认使用内存存储
 	Session             *SessionConfig             // 自动恢复并保存完整对话（可选）
+	Compaction          *CompactionConfig          // 自动上下文压缩（可选）
 }
 
 // Agent 提供事件流驱动的交互能力。
@@ -87,14 +88,17 @@ type Agent struct {
 	done     chan struct{} // 执行完成信号
 	inTurn   atomic.Bool   // turn 状态跟踪（原子操作，线程安全）
 
-	history           []*schema.Message // 完整对话历史（含 assistant/tool），用于 steering/follow-up 重放
-	steeringQueue     []Message
-	followUpQueue     []Message
-	steeringMode      QueueMode
-	followUpMode      QueueMode
-	toolCalls         map[string]toolCallInfo
-	toolBatchDone     chan struct{}
-	toolBatchDoneFlag bool
+	history                  []*schema.Message // 完整对话历史（含 assistant/tool），用于展示和持久化
+	contextHistory           []*schema.Message // 发送给模型的上下文，压缩前与 history 相同
+	contextCompacted         bool
+	steeringQueue            []Message
+	followUpQueue            []Message
+	steeringMode             QueueMode
+	followUpMode             QueueMode
+	toolCalls                map[string]toolCallInfo
+	toolBatchDone            chan struct{}
+	toolBatchDoneFlag        bool
+	compactionMessagesBefore int
 
 	sessionStore     SessionStore
 	sessionID        string
@@ -117,6 +121,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 
 	history := cfg.History
+	contextHistory := history
 	var loadedSession *Session
 	if cfg.Session != nil {
 		var err error
@@ -128,6 +133,11 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 			return nil, fmt.Errorf("agentkit: load session %q: %w", cfg.Session.ID, err)
 		}
 		history = loadedSession.Messages
+		if loadedSession.Context != nil {
+			contextHistory = loadedSession.Context
+		} else {
+			contextHistory = history
+		}
 	}
 
 	maxIter := cfg.MaxIterations
@@ -160,10 +170,17 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		a.sessionCreatedAt = loadedSession.CreatedAt
 		a.sessionUpdatedAt = loadedSession.UpdatedAt
 	}
-	a.replaceHistory(history)
+	a.restoreHistory(history, contextHistory, loadedSession != nil && loadedSession.Context != nil)
 
-	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+1)
+	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+2)
 	handlers = append(handlers, cfg.Handlers...)
+	if cfg.Compaction != nil {
+		middleware, err := newCompactionMiddleware(ctx, a, cfg.Model, cfg.Compaction)
+		if err != nil {
+			return nil, err
+		}
+		handlers = append(handlers, middleware)
+	}
 	handlers = append(handlers, &agentLifecycleHandler{
 		BaseChatModelAgentMiddleware: &BaseChatModelAgentMiddleware{},
 		agent:                        a,
@@ -231,6 +248,9 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 		if cfg.History != nil {
 			return errors.New("agentkit: history and session cannot be configured together")
 		}
+	}
+	if err := validateCompactionConfig(cfg.Compaction); err != nil {
+		return err
 	}
 	return nil
 }
@@ -385,6 +405,7 @@ func (a *Agent) appendHistory(msg *schema.Message) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = append(a.history, msg)
+	a.contextHistory = append(a.contextHistory, msg)
 }
 
 // Resume 从 HITL 中断恢复执行。
@@ -451,6 +472,14 @@ func (a *Agent) History() []*schema.Message {
 	return cloneHistoryMessages(a.history)
 }
 
+// ContextHistory 获取当前发送给模型的上下文副本。
+// 未发生压缩时，它与 History 相同；压缩后 History 仍保留完整对话。
+func (a *Agent) ContextHistory() []*schema.Message {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return cloneHistoryMessages(a.contextHistory)
+}
+
 // Session 获取当前会话快照。未配置会话持久化时返回 nil。
 func (a *Agent) Session() *Session {
 	a.mu.Lock()
@@ -463,6 +492,7 @@ func (a *Agent) Session() *Session {
 		CreatedAt: a.sessionCreatedAt,
 		UpdatedAt: a.sessionUpdatedAt,
 		Messages:  cloneHistoryMessages(a.history),
+		Context:   a.sessionContextLocked(),
 	}
 }
 
@@ -493,6 +523,7 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 		CreatedAt: createdAt,
 		UpdatedAt: now,
 		Messages:  cloneHistoryMessages(a.history),
+		Context:   a.sessionContextLocked(),
 	}
 	store := a.sessionStore
 	a.mu.Unlock()
@@ -522,11 +553,14 @@ func (a *Agent) Reset() {
 	defer a.mu.Unlock()
 	a.state.Clear()
 	a.history = nil
+	a.contextHistory = nil
+	a.contextCompacted = false
 	a.steeringQueue = nil
 	a.followUpQueue = nil
 	a.toolCalls = make(map[string]toolCallInfo)
 	a.toolBatchDone = nil
 	a.toolBatchDoneFlag = false
+	a.compactionMessagesBefore = 0
 }
 
 // startRun 标记 Agent 开始执行。如果已在执行中，返回错误。

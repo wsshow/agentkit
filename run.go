@@ -67,8 +67,7 @@ func (a *Agent) processQueues(ctx context.Context, err error) error {
 // executeLoop 执行一次 runner.Run，消费事件流。
 func (a *Agent) executeLoop(parentCtx context.Context) error {
 	a.mu.Lock()
-	history := make([]*schema.Message, len(a.history))
-	copy(history, a.history)
+	history := cloneHistoryMessages(a.contextHistory)
 	a.mu.Unlock()
 
 	cancelOpt, cancelAgent := adk.WithCancel()
@@ -198,6 +197,9 @@ func (a *Agent) processEvent(ctx context.Context, event *adk.AgentEvent) error {
 }
 
 func (a *Agent) processAction(agentName string, action *adk.AgentAction) {
+	if action.CustomizedAction != nil {
+		a.processCompactionAction(agentName, action.CustomizedAction)
+	}
 	if action.TransferToAgent != nil {
 		a.emtr.Emit(Event{
 			Type:    EventTransfer,

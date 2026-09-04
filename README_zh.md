@@ -15,6 +15,7 @@
 - **推理模型支持** — 原生支持思考/推理模型（DeepSeek-R1、o1 等），流式输出推理过程
 - **多模态输入** — 通过 `Send()` 发送文本、图片、音频、视频、文件，配套简洁构造函数
 - **会话持久化** — 自动保存和恢复完整对话，内置并发安全的内存与原子文件存储
+- **自动上下文压缩** — 超过 token 或消息阈值时自动摘要，完整历史与模型上下文分离保存
 - **工具集成** — 接入任何 Eino 兼容工具，自动处理工具调用
 - **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
@@ -92,6 +93,8 @@ func main() {
 | `EventTurnEnd`        | 助手消息和工具结果都处理完后，一轮结束                                      |
 | `EventTransfer`       | Agent 转移（多 Agent 场景）                                                 |
 | `EventInterrupted`    | HITL 中断（`Event.Interrupt`）                                              |
+| `EventCompactionStart` | 自动上下文压缩开始（`Event.Compaction.MessagesBefore`）                    |
+| `EventCompactionEnd`  | 自动上下文压缩完成（`Event.Compaction`）                                    |
 | `EventAgentEnd`       | Agent 处理完成                                                              |
 | `EventError`          | 发生错误（`Event.Error`）                                                   |
 
@@ -111,6 +114,7 @@ type Event struct {
     ToolName         string           // 工具名称（tool_update / tool_end）
     ToolArguments    string           // 工具调用参数（tool_update / tool_end）
     Interrupt        []InterruptPoint // 中断点列表（interrupted）
+    Compaction       *CompactionInfo  // 上下文压缩前后的消息数量
     Error            error            // 错误信息（error）
 }
 ```
@@ -126,7 +130,6 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     SystemPrompt:    "系统指令",
     Model:           chatModel,                          // agentkit.ChatModel
     Tools:           []agentkit.Tool{myTool},             // 可选
-    History:         savedHistory,                        // 可选
     Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // 可选
     ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // 可选
     ModelFailoverConfig: failoverConfig,                              // 可选
@@ -136,9 +139,15 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
         ID: "user-123",
         Store: sessionStore,
     },
+    Compaction: &agentkit.CompactionConfig{               // 自动上下文压缩（可选）
+        MaxTokens: 80_000,
+        KeepRecentTurns: 2,
+    },
 })
 defer agent.Close()
 ```
+
+如需手动恢复历史，可使用 `History: savedHistory`；它与 `Session` 二选一。
 
 ### 核心方法
 
@@ -169,6 +178,9 @@ agent.Reset()
 
 // 获取完整对话历史，用于调试或持久化（返回副本）
 history := agent.History()
+
+// 获取实际发送给模型的上下文（压缩前与 History 相同）
+contextHistory := agent.ContextHistory()
 
 // 替换完整对话历史，并同步展示状态
 agent.SetHistory(history)
@@ -217,6 +229,31 @@ err = store.Delete(ctx, "user-123") // 删除不存在的会话也会成功
 ```
 
 测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。同一个会话 ID 同一时间应只由一个 Agent 写入；内置存储保证并发安全，但不会擅自合并两段分叉的对话。
+
+### 自动上下文压缩
+
+启用 `Compaction` 后，AgentKit 会在上下文超过阈值时调用摘要模型，并原样保留最近的用户轮次：
+
+```go
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "assistant",
+    Model: chatModel,
+    Compaction: &agentkit.CompactionConfig{
+        MaxTokens:       80_000, // 建议低于模型的上下文窗口
+        MaxMessages:     100,    // 可选；任一阈值超出即触发
+        KeepRecentTurns: 2,      // 默认 1
+        Model:           summaryModel, // 可选；默认复用主模型
+    },
+})
+```
+
+两种历史各司其职：
+
+- `History()` 始终返回未删减的完整对话，适合 UI、审计和导出。
+- `ContextHistory()` 返回实际发送给模型的压缩上下文。
+- 配置了 `Session` 时两者会一起持久化，重启后不会重新塞回完整历史。
+
+如果不设置任何阈值，默认在估算超过 `DefaultCompactionMaxTokens`（100,000）时触发。摘要失败会作为正常错误返回，原上下文不会被覆盖。可订阅 `EventCompactionStart` 和 `EventCompactionEnd` 展示压缩进度。
 
 ### 集成测试
 
@@ -409,6 +446,7 @@ AgentKit 提供类型别名，消费者无需直接导入 eino 包：
 - **[tools](examples/tools/)** — 工具调用和进度事件
 - **[history](examples/history/)** — 导出并恢复对话历史
 - **[session](examples/session/)** — 自动持久化并跨进程恢复会话
+- **[compaction](examples/compaction/)** — 自动压缩长对话上下文
 - **[queues](examples/queues/)** — 后续消息和转向队列
 - **[hitl](examples/hitl/)** — 人机协作中断和恢复
 - **[multimodal](examples/multimodal/)** — 文本和图片输入
