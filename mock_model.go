@@ -565,48 +565,11 @@ func cloneMockResponse(response MockModelResponse) MockModelResponse {
 }
 
 func cloneSchemaMessages(messages []*schema.Message) []*schema.Message {
-	out := make([]*schema.Message, len(messages))
-	for i, msg := range messages {
-		out[i] = cloneSchemaMessage(msg)
-	}
-	return out
+	return cloneHistoryMessages(messages)
 }
 
 func cloneSchemaMessage(msg *schema.Message) *schema.Message {
-	if msg == nil {
-		return nil
-	}
-	out := *msg
-	out.MultiContent = append([]schema.ChatMessagePart(nil), msg.MultiContent...)
-	out.UserInputMultiContent = append([]schema.MessageInputPart(nil), msg.UserInputMultiContent...)
-	out.AssistantGenMultiContent = append([]schema.MessageOutputPart(nil), msg.AssistantGenMultiContent...)
-	out.ToolCalls = cloneToolCalls(msg.ToolCalls)
-	out.Extra = cloneMap(msg.Extra)
-	return &out
-}
-
-func cloneToolCalls(calls []schema.ToolCall) []schema.ToolCall {
-	out := make([]schema.ToolCall, len(calls))
-	for i, call := range calls {
-		out[i] = call
-		if call.Index != nil {
-			idx := *call.Index
-			out[i].Index = &idx
-		}
-		out[i].Extra = cloneMap(call.Extra)
-	}
-	return out
-}
-
-func cloneMap(src map[string]any) map[string]any {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string]any, len(src))
-	for k, v := range src {
-		out[k] = v
-	}
-	return out
+	return cloneHistoryMessage(msg)
 }
 
 func mockInputHasToolResult(input []*schema.Message, callID string) bool {

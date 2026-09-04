@@ -813,6 +813,9 @@ func TestAgentHistoryReturnsCopy(t *testing.T) {
 	history := agent.History()
 	history[0].Content = "外部修改"
 	history = append(history, schema.UserMessage("额外消息"))
+	if len(history) != 3 {
+		t.Fatalf("modified history length = %d, want 3", len(history))
+	}
 
 	got := agent.History()
 	if len(got) != 2 {
@@ -821,6 +824,106 @@ func TestAgentHistoryReturnsCopy(t *testing.T) {
 	if got[0].Content != "问题" {
 		t.Fatalf("history content = %q, want %q", got[0].Content, "问题")
 	}
+}
+
+func TestAgentHistoryDeeplyIsolatesMutableMessageFields(t *testing.T) {
+	ctx := context.Background()
+	agent, err := New(ctx, &Config{Name: "assistant", Model: NewMockChatModel()})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	imageURL := "https://example.com/original.png"
+	toolIndex := 2
+	streamIndex := 3
+	source := []*schema.Message{
+		{
+			Role: schema.User,
+			UserInputMultiContent: []schema.MessageInputPart{{
+				Type: schema.ChatMessagePartTypeImageURL,
+				Image: &schema.MessageInputImage{MessagePartCommon: schema.MessagePartCommon{
+					URL: &imageURL,
+				}},
+				Extra: map[string]any{"nested": map[string]any{"label": "original"}},
+			}},
+		},
+		{
+			Role: schema.Assistant,
+			ToolCalls: []schema.ToolCall{{
+				Index: &toolIndex,
+				ID:    "call-1",
+				Extra: map[string]any{"tags": []string{"original"}},
+			}},
+			AssistantGenMultiContent: []schema.MessageOutputPart{{
+				Type:          schema.ChatMessagePartTypeText,
+				Text:          "original",
+				StreamingMeta: &schema.MessageStreamingMeta{Index: streamIndex},
+			}},
+			ResponseMeta: &schema.ResponseMeta{
+				Usage: &schema.TokenUsage{TotalTokens: 42},
+				LogProbs: &schema.LogProbs{Content: []schema.LogProb{{
+					Token: "original",
+					Bytes: []int64{1, 2},
+					TopLogProbs: []schema.TopLogProb{{
+						Token: "original",
+						Bytes: []int64{3, 4},
+					}},
+				}}},
+			},
+		},
+	}
+	agent.SetHistory(source)
+
+	assertOriginal := func(t *testing.T, history []*schema.Message) {
+		t.Helper()
+		if got := *history[0].UserInputMultiContent[0].Image.URL; got != "https://example.com/original.png" {
+			t.Fatalf("image URL = %q, want original", got)
+		}
+		if got := history[0].UserInputMultiContent[0].Extra["nested"].(map[string]any)["label"]; got != "original" {
+			t.Fatalf("nested extra = %v, want original", got)
+		}
+		if got := *history[1].ToolCalls[0].Index; got != 2 {
+			t.Fatalf("tool index = %d, want 2", got)
+		}
+		if got := history[1].ToolCalls[0].Extra["tags"].([]string)[0]; got != "original" {
+			t.Fatalf("tool tags = %q, want original", got)
+		}
+		if got := history[1].AssistantGenMultiContent[0].StreamingMeta.Index; got != 3 {
+			t.Fatalf("stream index = %d, want 3", got)
+		}
+		if got := history[1].ResponseMeta.Usage.TotalTokens; got != 42 {
+			t.Fatalf("total tokens = %d, want 42", got)
+		}
+		if got := history[1].ResponseMeta.LogProbs.Content[0].Bytes[0]; got != 1 {
+			t.Fatalf("log probability bytes = %d, want 1", got)
+		}
+		if got := history[1].ResponseMeta.LogProbs.Content[0].TopLogProbs[0].Bytes[0]; got != 3 {
+			t.Fatalf("top log probability bytes = %d, want 3", got)
+		}
+	}
+
+	*source[0].UserInputMultiContent[0].Image.URL = "mutated source"
+	source[0].UserInputMultiContent[0].Extra["nested"].(map[string]any)["label"] = "mutated source"
+	*source[1].ToolCalls[0].Index = 99
+	source[1].ToolCalls[0].Extra["tags"].([]string)[0] = "mutated source"
+	source[1].AssistantGenMultiContent[0].StreamingMeta.Index = 99
+	source[1].ResponseMeta.Usage.TotalTokens = 99
+	source[1].ResponseMeta.LogProbs.Content[0].Bytes[0] = 99
+	source[1].ResponseMeta.LogProbs.Content[0].TopLogProbs[0].Bytes[0] = 99
+
+	history := agent.History()
+	assertOriginal(t, history)
+	*history[0].UserInputMultiContent[0].Image.URL = "mutated snapshot"
+	history[0].UserInputMultiContent[0].Extra["nested"].(map[string]any)["label"] = "mutated snapshot"
+	*history[1].ToolCalls[0].Index = 100
+	history[1].ToolCalls[0].Extra["tags"].([]string)[0] = "mutated snapshot"
+	history[1].AssistantGenMultiContent[0].StreamingMeta.Index = 100
+	history[1].ResponseMeta.Usage.TotalTokens = 100
+	history[1].ResponseMeta.LogProbs.Content[0].Bytes[0] = 100
+	history[1].ResponseMeta.LogProbs.Content[0].TopLogProbs[0].Bytes[0] = 100
+
+	assertOriginal(t, agent.History())
 }
 
 func TestAgentRunningRejectsConcurrentPrompt(t *testing.T) {
