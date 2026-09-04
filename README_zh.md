@@ -16,6 +16,7 @@
 - **多模态输入** — 通过 `Send()` 发送文本、图片、音频、视频、文件，配套简洁构造函数
 - **会话持久化** — 自动保存和恢复完整对话，内置并发安全的内存与原子文件存储
 - **自动上下文压缩** — 超过 token 或消息阈值时自动摘要，完整历史与模型上下文分离保存
+- **按需技能** — 从本地目录或自定义后端加载可复用的 `SKILL.md` 指令
 - **工具集成** — 接入任何 Eino 兼容工具，自动处理工具调用
 - **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
@@ -143,6 +144,9 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
         MaxTokens: 80_000,
         KeepRecentTurns: 2,
     },
+    Skills: &agentkit.SkillsConfig{                       // 按需加载 SKILL.md（可选）
+        Paths: []string{"./skills"},
+    },
 })
 defer agent.Close()
 ```
@@ -254,6 +258,41 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 - 配置了 `Session` 时两者会一起持久化，重启后不会重新塞回完整历史。
 
 如果不设置任何阈值，默认在估算超过 `DefaultCompactionMaxTokens`（100,000）时触发。摘要失败会作为正常错误返回，原上下文不会被覆盖。可订阅 `EventCompactionStart` 和 `EventCompactionEnd` 展示压缩进度。
+
+### 技能管理
+
+每个可复用技能放在独立目录中：
+
+```text
+skills/
+└── concise-answer/
+    └── SKILL.md
+```
+
+```markdown
+---
+name: concise-answer
+description: 让回答保持简短直接
+---
+回答不超过三个短句。
+```
+
+然后在 Agent 上启用技能目录：
+
+```go
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "assistant",
+    Model: chatModel,
+    Skills: &agentkit.SkillsConfig{
+        Paths: []string{"./skills"},
+        // ToolName: "load_skill", // 可选，默认为 "skill"
+    },
+})
+```
+
+`Paths` 可以指向一个 `SKILL.md` 文件、单个技能目录，或由一级技能子目录组成的集合目录。每次列出或加载技能时都会重新读取文件，因此修改后无需重建 Agent。技能重名、frontmatter 格式错误、指令为空或文件超过 1 MiB 都会返回明确错误。
+
+如需使用程序化或远端存储，用 `Backend` 代替 `Paths`。AgentKit 内置并发安全的 `NewMemorySkillBackend`，也暴露了精简的 `SkillBackend` 接口供自定义实现。简易配置有意只支持内联技能；包含 `context`、`agent` 或 `model` 覆盖的技能会尽早报错。需要 Eino 高级 fork/模型路由时，可通过 `Handlers` 安装完整配置的 Eino 技能中间件。
 
 ### 集成测试
 
@@ -447,6 +486,7 @@ AgentKit 提供类型别名，消费者无需直接导入 eino 包：
 - **[history](examples/history/)** — 导出并恢复对话历史
 - **[session](examples/session/)** — 自动持久化并跨进程恢复会话
 - **[compaction](examples/compaction/)** — 自动压缩长对话上下文
+- **[skills](examples/skills/)** — 从本地 `SKILL.md` 文件加载可复用指令
 - **[queues](examples/queues/)** — 后续消息和转向队列
 - **[hitl](examples/hitl/)** — 人机协作中断和恢复
 - **[multimodal](examples/multimodal/)** — 文本和图片输入

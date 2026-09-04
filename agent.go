@@ -72,6 +72,7 @@ type Config struct {
 	CheckPointStore     compose.CheckPointStore    // 自定义 CheckPoint 存储，默认使用内存存储
 	Session             *SessionConfig             // 自动恢复并保存完整对话（可选）
 	Compaction          *CompactionConfig          // 自动上下文压缩（可选）
+	Skills              *SkillsConfig              // 按需加载 SKILL.md（可选）
 }
 
 // Agent 提供事件流驱动的交互能力。
@@ -172,8 +173,15 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 	a.restoreHistory(history, contextHistory, loadedSession != nil && loadedSession.Context != nil)
 
-	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+2)
+	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+3)
 	handlers = append(handlers, cfg.Handlers...)
+	if cfg.Skills != nil {
+		middleware, err := newSkillsMiddleware(ctx, cfg.Skills)
+		if err != nil {
+			return nil, err
+		}
+		handlers = append(handlers, middleware)
+	}
 	if cfg.Compaction != nil {
 		middleware, err := newCompactionMiddleware(ctx, a, cfg.Model, cfg.Compaction)
 		if err != nil {
@@ -250,6 +258,9 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 		}
 	}
 	if err := validateCompactionConfig(cfg.Compaction); err != nil {
+		return err
+	}
+	if err := validateSkillsConfig(cfg.Skills); err != nil {
 		return err
 	}
 	return nil

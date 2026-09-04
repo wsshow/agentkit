@@ -16,6 +16,7 @@ Inspired by [pi-agent-core](https://github.com/badlogic/pi-mono/tree/main/packag
 - **Multimodal input** — Send text, images, audio, video, and files via `Send()` with ergonomic constructors
 - **Session persistence** — Automatically save and restore complete conversations with built-in concurrent memory and atomic file stores
 - **Automatic context compaction** — Summarize contexts over token or message limits while preserving full conversation history
+- **On-demand skills** — Load reusable `SKILL.md` instructions from local directories or a custom backend
 - **Tool integration** — Plug in any Eino-compatible tool with automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
@@ -143,6 +144,9 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
         MaxTokens: 80_000,
         KeepRecentTurns: 2,
     },
+    Skills: &agentkit.SkillsConfig{                       // on-demand SKILL.md loading (optional)
+        Paths: []string{"./skills"},
+    },
 })
 defer agent.Close()
 ```
@@ -254,6 +258,41 @@ The two history views have distinct responsibilities:
 - With `Session` configured, both are persisted so a restart does not accidentally restore the full history into the model context.
 
 With no explicit limit, compaction starts above the estimated `DefaultCompactionMaxTokens` (100,000). Summary errors are returned normally and never replace the original context. Subscribe to `EventCompactionStart` and `EventCompactionEnd` to show progress.
+
+### Skills
+
+Put each reusable skill in its own directory:
+
+```text
+skills/
+└── concise-answer/
+    └── SKILL.md
+```
+
+```markdown
+---
+name: concise-answer
+description: Keep answers short and direct
+---
+Answer in no more than three short sentences.
+```
+
+Then enable the directory on the agent:
+
+```go
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "assistant",
+    Model: chatModel,
+    Skills: &agentkit.SkillsConfig{
+        Paths: []string{"./skills"},
+        // ToolName: "load_skill", // optional; defaults to "skill"
+    },
+})
+```
+
+`Paths` accepts a `SKILL.md` file, one skill directory, or a collection directory whose immediate child directories contain skills. Files are reloaded on every list or load operation, so edits take effect without rebuilding the agent. Duplicate names, malformed frontmatter, missing instructions, and files over 1 MiB fail with an explicit error.
+
+For programmatic or remote storage, pass `Backend` instead of `Paths`. AgentKit includes a concurrency-safe `NewMemorySkillBackend` and exposes the small `SkillBackend` interface for custom implementations. The simple configuration intentionally supports inline skills only; skills requesting `context`, `agent`, or `model` overrides fail fast. Applications that need Eino's advanced fork/model routing can install a fully configured Eino skill middleware through `Handlers`.
 
 ### Integration Tests
 
@@ -447,6 +486,7 @@ See the [examples](examples/) directory:
 - **[history](examples/history/)** — Export and restore conversation history
 - **[session](examples/session/)** — Automatically persist and restore sessions across processes
 - **[compaction](examples/compaction/)** — Automatically compact long conversation contexts
+- **[skills](examples/skills/)** — Load reusable instructions from local `SKILL.md` files
 - **[queues](examples/queues/)** — Follow-up and steering queues
 - **[hitl](examples/hitl/)** — Human-in-the-loop interrupt and resume
 - **[multimodal](examples/multimodal/)** — Text and image inputs

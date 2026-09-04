@@ -96,6 +96,39 @@ func TestNewValidatesConfig(t *testing.T) {
 			},
 			want: "compaction keep recent turns must not be negative",
 		},
+		{
+			name: "skills missing source",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:  model,
+				Skills: &SkillsConfig{},
+			},
+			want: "skills require exactly one of paths or backend",
+		},
+		{
+			name: "skills have multiple sources",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model: model,
+				Skills: &SkillsConfig{
+					Paths:   []string{"skills"},
+					Backend: &MemorySkillBackend{},
+				},
+			},
+			want: "skills require exactly one of paths or backend",
+		},
+		{
+			name: "blank skill tool name",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model: model,
+				Skills: &SkillsConfig{
+					Backend:  &MemorySkillBackend{},
+					ToolName: " ",
+				},
+			},
+			want: "skill tool name must not be blank",
+		},
 	}
 
 	for _, tt := range tests {
