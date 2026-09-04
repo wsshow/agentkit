@@ -26,6 +26,9 @@ type emitterCtxKey struct{}
 type agentNameCtxKey struct{}
 type agentCtxKey struct{}
 
+// ErrAgentClosed 表示 Agent 已关闭，不能再执行新的请求。
+var ErrAgentClosed = errors.New("agentkit: agent is closed")
+
 // EmitToolUpdate 在工具执行中发送进度更新事件。
 // 工具通过 context 获取 Emitter 并发送 tool_update 事件：
 //
@@ -86,6 +89,7 @@ type Agent struct {
 	mu       sync.Mutex
 	cancelFn context.CancelFunc
 	running  bool          // 是否正在执行
+	closed   bool          // 是否已关闭
 	done     chan struct{} // 执行完成信号
 	inTurn   atomic.Bool   // turn 状态跟踪（原子操作，线程安全）
 
@@ -462,6 +466,9 @@ func (a *Agent) Abort() {
 
 // Close 关闭 Agent，释放资源。实现 io.Closer 接口。
 func (a *Agent) Close() error {
+	a.mu.Lock()
+	a.closed = true
+	a.mu.Unlock()
 	a.Abort()
 	return nil
 }
@@ -578,6 +585,9 @@ func (a *Agent) Reset() {
 func (a *Agent) startRun() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.closed {
+		return ErrAgentClosed
+	}
 	if a.running {
 		return errors.New("agent is already running")
 	}

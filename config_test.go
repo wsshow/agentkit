@@ -2,6 +2,7 @@ package agentkit
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -139,6 +140,36 @@ func TestNewValidatesConfig(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("New() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestAgentCannotRunAfterClose(t *testing.T) {
+	agent, err := New(context.Background(), &Config{Model: NewMockChatModel(MockModelText("unused"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "prompt", run: func() error { return agent.Prompt(context.Background(), "hello") }},
+		{name: "send", run: func() error { return agent.Send(context.Background(), Text("hello")) }},
+		{name: "continue", run: func() error { return agent.Continue(context.Background()) }},
+		{name: "resume", run: func() error { return agent.Resume(context.Background(), nil) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.run(); !errors.Is(err, ErrAgentClosed) {
+				t.Fatalf("run error = %v, want ErrAgentClosed", err)
 			}
 		})
 	}
