@@ -1,6 +1,6 @@
 module github.com/wsshow/agentkit
 
-go 1.25.3
+go 1.25.14
 
 require (
 	github.com/cloudwego/eino v0.9.19
