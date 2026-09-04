@@ -3,6 +3,7 @@ package agentkit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -95,6 +96,10 @@ type toolCallInfo struct {
 
 // New 创建 Agent
 func New(ctx context.Context, cfg *Config) (*Agent, error) {
+	if err := validateConfig(ctx, cfg); err != nil {
+		return nil, err
+	}
+
 	maxIter := cfg.MaxIterations
 	if maxIter == 0 {
 		maxIter = 20
@@ -160,6 +165,22 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 
 	a.runner = runner
 	return a, nil
+}
+
+func validateConfig(ctx context.Context, cfg *Config) error {
+	if ctx == nil {
+		return errors.New("agentkit: context is required")
+	}
+	if cfg == nil {
+		return errors.New("agentkit: config is required")
+	}
+	if cfg.Model == nil {
+		return errors.New("agentkit: model is required")
+	}
+	if cfg.MaxIterations < 0 {
+		return fmt.Errorf("agentkit: max iterations must not be negative: %d", cfg.MaxIterations)
+	}
+	return nil
 }
 
 // Prompt 发送用户输入并驱动 Agent 执行，事件通过 Subscribe 订阅。
