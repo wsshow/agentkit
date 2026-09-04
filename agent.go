@@ -451,6 +451,7 @@ func (a *Agent) drainFollowUp() []Message {
 }
 
 func (a *Agent) appendHistory(msg *schema.Message) {
+	msg = cloneHistoryMessage(msg)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.history = append(a.history, msg)

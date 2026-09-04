@@ -826,6 +826,34 @@ func TestAgentHistoryReturnsCopy(t *testing.T) {
 	}
 }
 
+func TestAgentSendCopiesCallerContentParts(t *testing.T) {
+	agent, err := New(context.Background(), &Config{
+		Name:  "assistant",
+		Model: NewMockChatModel(MockModelText("done")),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	part := ImageURL("https://example.com/original.png")
+	part.Extra = map[string]any{"labels": []string{"original"}}
+	if err := agent.Send(context.Background(), part); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	*part.Image.URL = "https://example.com/mutated.png"
+	part.Extra["labels"].([]string)[0] = "mutated"
+
+	history := agent.History()
+	if got := *history[0].UserInputMultiContent[0].Image.URL; got != "https://example.com/original.png" {
+		t.Fatalf("stored image URL = %q, want original", got)
+	}
+	if got := history[0].UserInputMultiContent[0].Extra["labels"].([]string)[0]; got != "original" {
+		t.Fatalf("stored labels = %q, want original", got)
+	}
+}
+
 func TestAgentHistoryDeeplyIsolatesMutableMessageFields(t *testing.T) {
 	ctx := context.Background()
 	agent, err := New(ctx, &Config{Name: "assistant", Model: NewMockChatModel()})
