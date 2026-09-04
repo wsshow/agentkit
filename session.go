@@ -56,15 +56,32 @@ type SessionStore interface {
 
 // MemorySessionStore 是并发安全的内存会话存储，适合测试和单进程服务。
 type MemorySessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
+	mu          sync.RWMutex
+	sessions    map[string]*Session
+	checkpoints *MemoryCheckpointStore
 }
 
-var _ SessionStore = (*MemorySessionStore)(nil)
+var (
+	_ SessionStore            = (*MemorySessionStore)(nil)
+	_ CheckpointStoreProvider = (*MemorySessionStore)(nil)
+)
 
 // NewMemorySessionStore 创建内存会话存储。
 func NewMemorySessionStore() *MemorySessionStore {
-	return &MemorySessionStore{sessions: make(map[string]*Session)}
+	return &MemorySessionStore{
+		sessions:    make(map[string]*Session),
+		checkpoints: NewMemoryCheckpointStore(),
+	}
+}
+
+// CheckpointStore 返回与会话共享生命周期的内存检查点存储。
+func (s *MemorySessionStore) CheckpointStore() CheckpointStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.checkpoints == nil {
+		s.checkpoints = NewMemoryCheckpointStore()
+	}
+	return s.checkpoints
 }
 
 // Load 加载会话快照。

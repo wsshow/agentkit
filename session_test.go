@@ -98,13 +98,19 @@ func TestFileSessionStoreRoundTripAndSafeFileName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir() error = %v", err)
 	}
-	if len(entries) != 1 || filepath.Ext(entries[0].Name()) != ".json" {
+	var sessionEntries []os.DirEntry
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+			sessionEntries = append(sessionEntries, entry)
+		}
+	}
+	if len(sessionEntries) != 1 {
 		t.Fatalf("session files = %v, want one JSON file", entries)
 	}
-	if entries[0].Name() == "outside.json" {
-		t.Fatalf("unsafe session file name = %q", entries[0].Name())
+	if sessionEntries[0].Name() == "outside.json" {
+		t.Fatalf("unsafe session file name = %q", sessionEntries[0].Name())
 	}
-	fileInfo, err := entries[0].Info()
+	fileInfo, err := sessionEntries[0].Info()
 	if err != nil {
 		t.Fatalf("session file Info() error = %v", err)
 	}

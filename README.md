@@ -250,7 +250,9 @@ saved, err := store.Load(ctx, "user-123")
 err = store.Delete(ctx, "user-123") // deleting a missing session also succeeds
 ```
 
-Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Only one Agent should write a given session ID at a time: the built-in stores are concurrency-safe, but they do not merge divergent conversations.
+Both built-in session stores automatically provide a matching checkpoint store. A file-backed session can therefore resume a HITL interrupt after the Agent or process is recreated without additional configuration. Without `Session`, configure durable checkpoints directly with `agentkit.NewFileCheckpointStore` and `Config.CheckPointStore`.
+
+Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend; it may additionally implement `agentkit.CheckpointStoreProvider` to supply durable checkpoints automatically. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Only one Agent should write a given session ID at a time: the built-in stores are concurrency-safe, but they do not merge divergent conversations.
 
 ### Automatic Context Compaction
 

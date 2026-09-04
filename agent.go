@@ -80,7 +80,7 @@ type Config struct {
 	ModelRetryConfig    *ModelRetryConfig          // 模型调用重试配置（可选）
 	ModelFailoverConfig *ModelFailoverConfig       // 模型失败转移配置（可选）
 	MaxIterations       int                        // 默认 20
-	CheckPointStore     compose.CheckPointStore    // 自定义 CheckPoint 存储，默认使用内存存储
+	CheckPointStore     compose.CheckPointStore    // 自定义 CheckPoint 存储；默认使用 Session 配套存储或内存存储
 	Session             *SessionConfig             // 自动恢复并保存完整对话（可选）
 	Compaction          *CompactionConfig          // 自动上下文压缩（可选）
 	Skills              *SkillsConfig              // 按需加载 SKILL.md（可选）
@@ -250,8 +250,13 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 
 	store := cfg.CheckPointStore
+	if store == nil && cfg.Session != nil {
+		if provider, ok := cfg.Session.Store.(CheckpointStoreProvider); ok {
+			store = provider.CheckpointStore()
+		}
+	}
 	if store == nil {
-		store = newInMemoryStore()
+		store = NewMemoryCheckpointStore()
 	}
 
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{

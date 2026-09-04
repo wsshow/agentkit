@@ -21,11 +21,15 @@ type storedSession struct {
 // FileSessionStore 将每个会话原子地保存为一个 JSON 文件。
 // 它适合本地应用和单进程服务；多进程写入请实现数据库型 SessionStore。
 type FileSessionStore struct {
-	dir string
-	mu  sync.RWMutex
+	dir         string
+	mu          sync.RWMutex
+	checkpoints *FileCheckpointStore
 }
 
-var _ SessionStore = (*FileSessionStore)(nil)
+var (
+	_ SessionStore            = (*FileSessionStore)(nil)
+	_ CheckpointStoreProvider = (*FileSessionStore)(nil)
+)
 
 // NewFileSessionStore 创建文件会话存储。目录不存在时会自动创建。
 func NewFileSessionStore(dir string) (*FileSessionStore, error) {
@@ -36,7 +40,16 @@ func NewFileSessionStore(dir string) (*FileSessionStore, error) {
 	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agentkit: create session directory: %w", err)
 	}
-	return &FileSessionStore{dir: cleanDir}, nil
+	checkpoints, err := NewFileCheckpointStore(filepath.Join(cleanDir, ".checkpoints"))
+	if err != nil {
+		return nil, err
+	}
+	return &FileSessionStore{dir: cleanDir, checkpoints: checkpoints}, nil
+}
+
+// CheckpointStore 返回与会话目录配套的文件检查点存储。
+func (s *FileSessionStore) CheckpointStore() CheckpointStore {
+	return s.checkpoints
 }
 
 // Load 从文件加载会话快照。

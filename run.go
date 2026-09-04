@@ -5,10 +5,8 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"sync"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -370,28 +368,4 @@ func (a *Agent) endTurn() {
 	if a.inTurn.CompareAndSwap(true, false) {
 		a.emtr.Emit(Event{Type: EventTurnEnd, Agent: a.name})
 	}
-}
-
-// inMemoryStore 内存 CheckPoint 存储
-type inMemoryStore struct {
-	mu  sync.Mutex
-	mem map[string][]byte
-}
-
-func newInMemoryStore() compose.CheckPointStore {
-	return &inMemoryStore{mem: map[string][]byte{}}
-}
-
-func (s *inMemoryStore) Set(_ context.Context, key string, value []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.mem[key] = value
-	return nil
-}
-
-func (s *inMemoryStore) Get(_ context.Context, key string) ([]byte, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	v, ok := s.mem[key]
-	return v, ok, nil
 }
