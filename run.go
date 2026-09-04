@@ -114,25 +114,13 @@ func (a *Agent) executeResume(parentCtx context.Context, targets map[string]any)
 
 // consumeIter 消费事件迭代器，处理事件。
 func (a *Agent) consumeIter(parentCtx context.Context, iter *adk.AsyncIterator[*adk.AgentEvent]) error {
-	ctx, cancel := context.WithCancel(parentCtx)
-	a.mu.Lock()
-	a.cancelFn = cancel
-	a.mu.Unlock()
-
-	defer func() {
-		cancel()
-		a.mu.Lock()
-		a.cancelFn = nil
-		a.mu.Unlock()
-	}()
-
 	var lastErr error
 	for {
 		select {
-		case <-ctx.Done():
+		case <-parentCtx.Done():
 			a.endTurn()
-			a.emtr.Emit(Event{Type: EventError, Agent: a.name, Error: ctx.Err()})
-			return ctx.Err()
+			a.emtr.Emit(Event{Type: EventError, Agent: a.name, Error: parentCtx.Err()})
+			return parentCtx.Err()
 		default:
 		}
 
@@ -149,7 +137,7 @@ func (a *Agent) consumeIter(parentCtx context.Context, iter *adk.AsyncIterator[*
 			lastErr = event.Err
 		}
 
-		if err := a.processEvent(ctx, event); err != nil {
+		if err := a.processEvent(parentCtx, event); err != nil {
 			lastErr = err
 		}
 	}

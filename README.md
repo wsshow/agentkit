@@ -184,7 +184,10 @@ err := agent.Resume(ctx, map[string]any{"interruptID": data})
 // Subscribe to events, returns unsubscribe function
 unsubscribe := agent.Subscribe(func(e agentkit.Event) { ... })
 
-// Cancel current execution and wait for completion
+// Request cancellation without blocking (safe inside subscribers)
+agent.Cancel()
+
+// Cancel current execution and wait for completion (call outside subscribers)
 agent.Abort()
 
 // Reset agent state (waits for completion, then clears history and queues)

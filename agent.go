@@ -296,21 +296,23 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 // Prompt 发送用户输入并驱动 Agent 执行，事件通过 Subscribe 订阅。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Prompt(ctx context.Context, input string) error {
-	if err := a.startRun(ctx); err != nil {
+	runCtx, err := a.startRun(ctx)
+	if err != nil {
 		return err
 	}
 	defer a.endRun()
 
 	a.state.AddMessage(Message{Role: RoleUser, Content: input})
 	a.appendHistory(schema.UserMessage(input))
-	return a.run(ctx, []Message{{Role: RoleUser, Content: input}})
+	return a.run(runCtx, []Message{{Role: RoleUser, Content: input}})
 }
 
 // Send 发送多模态内容并驱动 Agent 执行。
 // 使用 Text、ImageURL、AudioURL 等构造函数创建 ContentPart。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
-	if err := a.startRun(ctx); err != nil {
+	runCtx, err := a.startRun(ctx)
+	if err != nil {
 		return err
 	}
 	defer a.endRun()
@@ -327,13 +329,14 @@ func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
 		Role:                  schema.User,
 		UserInputMultiContent: parts,
 	})
-	return a.run(ctx, []Message{{Role: RoleUser, Content: textContent}})
+	return a.run(runCtx, []Message{{Role: RoleUser, Content: textContent}})
 }
 
 // Continue 从当前状态恢复执行（不添加新消息），用于错误后重试。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Continue(ctx context.Context) error {
-	if err := a.startRun(ctx); err != nil {
+	runCtx, err := a.startRun(ctx)
+	if err != nil {
 		return err
 	}
 	defer a.endRun()
@@ -352,7 +355,7 @@ func (a *Agent) Continue(ctx context.Context) error {
 	if lastRole == schema.Assistant {
 		return errors.New("cannot continue from assistant message, last message must be user or tool result")
 	}
-	return a.run(ctx, nil)
+	return a.run(runCtx, nil)
 }
 
 // Steer 在 Agent 执行期间插入转向消息。
@@ -450,18 +453,19 @@ func (a *Agent) appendHistory(msg *schema.Message) {
 // targets 格式为 map[interruptID]data，interruptID 来自 Event.Interrupt[].ID。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Resume(ctx context.Context, targets map[string]any) error {
-	if err := a.startRun(ctx); err != nil {
+	runCtx, err := a.startRun(ctx)
+	if err != nil {
 		return err
 	}
 	defer a.endRun()
 
-	ctx = a.withRunContext(ctx)
+	runCtx = a.withRunContext(runCtx)
 
 	a.emtr.Emit(Event{Type: EventAgentStart, Agent: a.name})
 
-	err := a.executeResume(ctx, targets)
-	err = a.processQueues(ctx, err)
-	err = a.persistSession(ctx, err)
+	err = a.executeResume(runCtx, targets)
+	err = a.processQueues(runCtx, err)
+	err = a.persistSession(runCtx, err)
 
 	a.emtr.Emit(Event{Type: EventAgentEnd, Agent: a.name})
 	return err
@@ -472,7 +476,19 @@ func (a *Agent) Subscribe(fn Subscriber) func() {
 	return a.emtr.Subscribe(fn)
 }
 
-// Abort 取消当前执行并等待完成
+// Cancel 请求取消当前执行且不等待完成。
+// 可在 Subscribe 回调中安全调用；需要等待执行退出时请在回调外使用 Abort。
+func (a *Agent) Cancel() {
+	a.mu.Lock()
+	cancel := a.cancelFn
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// Abort 取消当前执行并等待完成。
+// Subscribe 回调与执行处于同一 goroutine，回调内请使用 Cancel 以避免等待自身。
 func (a *Agent) Abort() {
 	a.mu.Lock()
 	cancel := a.cancelFn
@@ -608,33 +624,40 @@ func (a *Agent) Reset() {
 }
 
 // startRun 标记 Agent 开始执行。如果已在执行中，返回错误。
-func (a *Agent) startRun(ctx context.Context) error {
+func (a *Agent) startRun(ctx context.Context) (context.Context, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
-		return ErrAgentClosed
+		return nil, ErrAgentClosed
 	}
 	if a.running {
-		return errors.New("agent is already running")
+		return nil, errors.New("agent is already running")
 	}
 	if ctx == nil {
-		return errors.New("agentkit: context is required")
+		return nil, errors.New("agentkit: context is required")
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
+	runCtx, cancel := context.WithCancel(ctx)
 	a.running = true
 	a.done = make(chan struct{})
-	return nil
+	a.cancelFn = cancel
+	return runCtx, nil
 }
 
 // endRun 标记 Agent 执行完成。
 func (a *Agent) endRun() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	cancel := a.cancelFn
+	a.cancelFn = nil
 	a.running = false
 	if a.done != nil {
 		close(a.done)
 		a.done = nil
+	}
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 }

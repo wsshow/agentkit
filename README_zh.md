@@ -184,7 +184,10 @@ err := agent.Resume(ctx, map[string]any{"interruptID": data})
 // 订阅事件，返回取消订阅函数
 unsubscribe := agent.Subscribe(func(e agentkit.Event) { ... })
 
-// 取消当前执行并等待完成
+// 请求取消且不阻塞（可在订阅回调内调用）
+agent.Cancel()
+
+// 取消当前执行并等待完成（请在订阅回调外调用）
 agent.Abort()
 
 // 重置 Agent 状态（等待完成后清空历史和队列）

@@ -926,6 +926,94 @@ func TestAgentHistoryDeeplyIsolatesMutableMessageFields(t *testing.T) {
 	assertOriginal(t, agent.History())
 }
 
+func TestAgentCancelIsSafeFromSubscriber(t *testing.T) {
+	agent, err := New(context.Background(), &Config{
+		Name:  "assistant",
+		Model: NewMockChatModel(MockModelText("unused")),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	agent.Subscribe(func(event Event) {
+		if event.Type == EventAgentStart {
+			agent.Cancel()
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.Prompt(context.Background(), "cancel me")
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Prompt() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Cancel() from subscriber deadlocked")
+	}
+}
+
+func TestAgentAbortCanCancelBeforeIterationStarts(t *testing.T) {
+	agent, err := New(context.Background(), &Config{
+		Name:  "assistant",
+		Model: NewMockChatModel(MockModelText("unused")),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	agent.Subscribe(func(event Event) {
+		if event.Type == EventAgentStart {
+			close(started)
+			<-release
+		}
+	})
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- agent.Prompt(context.Background(), "abort me")
+	}()
+	<-started
+
+	canceled := make(chan struct{})
+	var cancelObserved sync.Once
+	agent.mu.Lock()
+	cancel := agent.cancelFn
+	agent.cancelFn = func() {
+		cancel()
+		cancelObserved.Do(func() { close(canceled) })
+	}
+	agent.mu.Unlock()
+
+	abortDone := make(chan struct{})
+	go func() {
+		agent.Abort()
+		close(abortDone)
+	}()
+	<-canceled
+	close(release)
+
+	select {
+	case err := <-runDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Prompt() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Prompt() did not stop after Abort()")
+	}
+	select {
+	case <-abortDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Abort() did not wait for Prompt() to stop")
+	}
+}
+
 func TestAgentRunningRejectsConcurrentPrompt(t *testing.T) {
 	ctx := context.Background()
 	started := make(chan struct{})
