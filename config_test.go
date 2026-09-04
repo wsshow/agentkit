@@ -174,3 +174,64 @@ func TestAgentCannotRunAfterClose(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentRunMethodsValidateContextBeforeChangingState(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Agent, context.Context) error
+	}{
+		{name: "prompt", run: func(agent *Agent, ctx context.Context) error {
+			return agent.Prompt(ctx, "hello")
+		}},
+		{name: "send", run: func(agent *Agent, ctx context.Context) error {
+			return agent.Send(ctx, Text("hello"))
+		}},
+		{name: "continue", run: func(agent *Agent, ctx context.Context) error {
+			return agent.Continue(ctx)
+		}},
+		{name: "resume", run: func(agent *Agent, ctx context.Context) error {
+			return agent.Resume(ctx, nil)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name+" rejects nil context", func(t *testing.T) {
+			agent, err := New(context.Background(), &Config{Model: NewMockChatModel(MockModelText("unused"))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer agent.Close()
+
+			err = tt.run(agent, nil)
+			if err == nil || !strings.Contains(err.Error(), "context is required") {
+				t.Fatalf("run error = %v, want context is required", err)
+			}
+			if got := agent.History(); len(got) != 0 {
+				t.Fatalf("history changed after rejected run: %#v", got)
+			}
+			if got := agent.State().Messages(); len(got) != 0 {
+				t.Fatalf("state changed after rejected run: %#v", got)
+			}
+		})
+
+		t.Run(tt.name+" rejects canceled context", func(t *testing.T) {
+			agent, err := New(context.Background(), &Config{Model: NewMockChatModel(MockModelText("unused"))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer agent.Close()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if err := tt.run(agent, ctx); !errors.Is(err, context.Canceled) {
+				t.Fatalf("run error = %v, want context.Canceled", err)
+			}
+			if got := agent.History(); len(got) != 0 {
+				t.Fatalf("history changed after rejected run: %#v", got)
+			}
+			if got := agent.State().Messages(); len(got) != 0 {
+				t.Fatalf("state changed after rejected run: %#v", got)
+			}
+		})
+	}
+}

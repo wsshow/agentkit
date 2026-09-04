@@ -296,7 +296,7 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 // Prompt 发送用户输入并驱动 Agent 执行，事件通过 Subscribe 订阅。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Prompt(ctx context.Context, input string) error {
-	if err := a.startRun(); err != nil {
+	if err := a.startRun(ctx); err != nil {
 		return err
 	}
 	defer a.endRun()
@@ -310,7 +310,7 @@ func (a *Agent) Prompt(ctx context.Context, input string) error {
 // 使用 Text、ImageURL、AudioURL 等构造函数创建 ContentPart。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
-	if err := a.startRun(); err != nil {
+	if err := a.startRun(ctx); err != nil {
 		return err
 	}
 	defer a.endRun()
@@ -333,7 +333,7 @@ func (a *Agent) Send(ctx context.Context, parts ...ContentPart) error {
 // Continue 从当前状态恢复执行（不添加新消息），用于错误后重试。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Continue(ctx context.Context) error {
-	if err := a.startRun(); err != nil {
+	if err := a.startRun(ctx); err != nil {
 		return err
 	}
 	defer a.endRun()
@@ -450,7 +450,7 @@ func (a *Agent) appendHistory(msg *schema.Message) {
 // targets 格式为 map[interruptID]data，interruptID 来自 Event.Interrupt[].ID。
 // 如果 Agent 已在执行中，返回错误。
 func (a *Agent) Resume(ctx context.Context, targets map[string]any) error {
-	if err := a.startRun(); err != nil {
+	if err := a.startRun(ctx); err != nil {
 		return err
 	}
 	defer a.endRun()
@@ -608,7 +608,7 @@ func (a *Agent) Reset() {
 }
 
 // startRun 标记 Agent 开始执行。如果已在执行中，返回错误。
-func (a *Agent) startRun() error {
+func (a *Agent) startRun(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -616,6 +616,12 @@ func (a *Agent) startRun() error {
 	}
 	if a.running {
 		return errors.New("agent is already running")
+	}
+	if ctx == nil {
+		return errors.New("agentkit: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	a.running = true
 	a.done = make(chan struct{})
