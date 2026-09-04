@@ -76,7 +76,24 @@ func main() {
 }
 ```
 
-`Ask` is the simplest blocking API. `RunResult` also contains the final schema message, messages added during the run, accumulated token usage, tool calls, and pending HITL interrupts. Subscribe to events when real-time output or tool progress is needed.
+`Ask` is the simplest blocking API. `RunResult` also contains the final schema message, messages added during the run, accumulated token usage, tool calls, and pending HITL interrupts. Use a request-scoped stream when real-time output or tool progress is needed:
+
+```go
+stream, err := agent.Stream(ctx, "Explain MCP")
+if err != nil {
+    log.Fatal(err)
+}
+defer stream.Close()
+
+for event := range stream.Events() {
+    if event.Type == agentkit.EventMessageDelta {
+        fmt.Print(event.Delta)
+    }
+}
+result, err := stream.Wait()
+```
+
+The stream reserves the Agent before returning, supports `Cancel`, `Done`, `Wait`, and `Close`, and isolates execution from slow event consumers with an internal queue. Use `StreamParts` for multimodal input. Global `Subscribe` remains available for logging and application-wide observers.
 
 ## Event Types
 
@@ -169,6 +186,11 @@ err := agent.Prompt(ctx, "user message")
 // Or receive the final response and run metadata directly
 result, err := agent.Ask(ctx, "user message")
 fmt.Println(result.Text, result.Usage)
+
+// Or consume a request-scoped event stream
+stream, err := agent.Stream(ctx, "user message")
+for event := range stream.Events() { ... }
+result, err = stream.Wait()
 
 // Send multimodal input (text + images, audio, video, files)
 err := agent.Send(ctx,

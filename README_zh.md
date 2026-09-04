@@ -76,7 +76,24 @@ func main() {
 }
 ```
 
-`Ask` 是最简单的阻塞式 API。`RunResult` 还包含最终 schema 消息、本次新增消息、累计 token 用量、工具调用和待处理的 HITL 中断。需要实时输出或工具进度时再订阅事件即可。
+`Ask` 是最简单的阻塞式 API。`RunResult` 还包含最终 schema 消息、本次新增消息、累计 token 用量、工具调用和待处理的 HITL 中断。需要实时输出或工具进度时，可使用请求级事件流：
+
+```go
+stream, err := agent.Stream(ctx, "解释一下 MCP")
+if err != nil {
+    log.Fatal(err)
+}
+defer stream.Close()
+
+for event := range stream.Events() {
+    if event.Type == agentkit.EventMessageDelta {
+        fmt.Print(event.Delta)
+    }
+}
+result, err := stream.Wait()
+```
+
+`Stream` 会在返回前占用 Agent，提供 `Cancel`、`Done`、`Wait`、`Close`，并通过内部队列隔离慢事件消费者，避免阻塞 Agent 执行。多模态输入使用 `StreamParts`。全局 `Subscribe` 仍适合日志和应用级观察器。
 
 ## 事件类型
 
@@ -169,6 +186,11 @@ err := agent.Prompt(ctx, "用户消息")
 // 或直接获得最终回复与本次运行元数据
 result, err := agent.Ask(ctx, "用户消息")
 fmt.Println(result.Text, result.Usage)
+
+// 或消费本次请求专属的事件流
+stream, err := agent.Stream(ctx, "用户消息")
+for event := range stream.Events() { ... }
+result, err = stream.Wait()
 
 // 发送多模态输入（文本 + 图片、音频、视频、文件）
 err := agent.Send(ctx,

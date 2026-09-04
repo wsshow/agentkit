@@ -336,13 +336,16 @@ func (a *Agent) promptWithResult(ctx context.Context, input string) (*RunResult,
 		return nil, err
 	}
 	defer a.endRun()
+	return a.executePromptWithResult(runCtx, input)
+}
 
+func (a *Agent) executePromptWithResult(runCtx context.Context, input string) (*RunResult, error) {
 	a.mu.Lock()
 	historyOffset := len(a.history)
 	a.mu.Unlock()
 	a.state.AddMessage(Message{Role: RoleUser, Content: input})
 	a.appendHistory(schema.UserMessage(input))
-	err = a.run(runCtx, []Message{{Role: RoleUser, Content: input}})
+	err := a.run(runCtx, []Message{{Role: RoleUser, Content: input}})
 	return a.resultSince(historyOffset), err
 }
 
@@ -365,7 +368,10 @@ func (a *Agent) sendWithResult(ctx context.Context, parts ...ContentPart) (*RunR
 		return nil, err
 	}
 	defer a.endRun()
+	return a.executeSendWithResult(runCtx, parts...)
+}
 
+func (a *Agent) executeSendWithResult(runCtx context.Context, parts ...ContentPart) (*RunResult, error) {
 	a.mu.Lock()
 	historyOffset := len(a.history)
 	a.mu.Unlock()
@@ -381,7 +387,7 @@ func (a *Agent) sendWithResult(ctx context.Context, parts ...ContentPart) (*RunR
 		Role:                  schema.User,
 		UserInputMultiContent: parts,
 	})
-	err = a.run(runCtx, []Message{{Role: RoleUser, Content: textContent}})
+	err := a.run(runCtx, []Message{{Role: RoleUser, Content: textContent}})
 	return a.resultSince(historyOffset), err
 }
 
