@@ -6,7 +6,7 @@
 
 A lightweight, event-stream-driven Agent toolkit built on top of [CloudWeGo Eino ADK](https://github.com/cloudwego/eino).
 
-Inspired by [pi-agent-core](https://github.com/badlogic/pi-mono/tree/main/packages/agent), AgentKit brings event streaming, message queuing, and human-in-the-loop (HITL) capabilities to the Go + Eino ecosystem.
+Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packages/agent), AgentKit brings event streaming, message queuing, and human-in-the-loop (HITL) capabilities to the Go + Eino ecosystem.
 
 ## Features
 
@@ -25,8 +25,10 @@ Inspired by [pi-agent-core](https://github.com/badlogic/pi-mono/tree/main/packag
 
 ## Installation
 
+AgentKit requires Go 1.25.14 or later.
+
 ```bash
-go get github.com/wsshow/agentkit
+go get github.com/wsshow/agentkit@latest
 ```
 
 ## Quick Start
@@ -46,11 +48,14 @@ import (
 func main() {
 	ctx := context.Background()
 
-	chatModel, _ := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		APIKey:  "your-api-key",
 		BaseURL: "https://api.openai.com/v1",
 		Model:   "gpt-4o",
 	})
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	agent, err := agentkit.New(ctx, &agentkit.Config{
 		Name:         "assistant",

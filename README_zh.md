@@ -6,7 +6,7 @@
 
 轻量级、事件流驱动的 Agent 工具包，基于 [CloudWeGo Eino ADK](https://github.com/cloudwego/eino) 构建。
 
-灵感来源于 [pi-agent-core](https://github.com/badlogic/pi-mono/tree/main/packages/agent)，在 Go + Eino 生态下实现事件流、消息队列和 HITL（人机协作）机制。
+灵感来源于 [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packages/agent)，在 Go + Eino 生态下实现事件流、消息队列和 HITL（人机协作）机制。
 
 ## 特性
 
@@ -25,8 +25,10 @@
 
 ## 安装
 
+AgentKit 需要 Go 1.25.14 或更高版本。
+
 ```bash
-go get github.com/wsshow/agentkit
+go get github.com/wsshow/agentkit@latest
 ```
 
 ## 快速开始
@@ -46,11 +48,14 @@ import (
 func main() {
 	ctx := context.Background()
 
-	chatModel, _ := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+	chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
 		APIKey:  "your-api-key",
 		BaseURL: "https://api.openai.com/v1",
 		Model:   "gpt-4o",
 	})
+	if err != nil {
+		log.Fatalln(err)
+	}
 
 	agent, err := agentkit.New(ctx, &agentkit.Config{
 		Name:         "assistant",
