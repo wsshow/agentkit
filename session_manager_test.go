@@ -672,6 +672,94 @@ func TestSessionManagerSnapshotOperationsWaitForSourceRunToSettle(t *testing.T) 
 	}
 }
 
+func TestSessionManagerSnapshotOperationsWaitForGoalEvaluationToSettle(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	evaluationStarted := make(chan struct{})
+	releaseEvaluation := make(chan struct{})
+	manager, err := NewSessionManager(&SessionManagerConfig{
+		Store: store,
+		AgentConfig: &Config{
+			Name:  "assistant",
+			Model: NewMockChatModel(MockModelText("work complete")),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		select {
+		case <-releaseEvaluation:
+		default:
+			close(releaseEvaluation)
+		}
+		_ = manager.Close()
+	})
+	source, err := manager.CreateWithOptions(ctx, CreateSessionOptions{ID: "source-goal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := NewGoalRunner(source, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(ctx context.Context, _ GoalEvaluation) (GoalDecision, error) {
+			close(evaluationStarted)
+			select {
+			case <-releaseEvaluation:
+				return GoalDecision{Complete: true, Reason: "verified"}, nil
+			case <-ctx.Done():
+				return GoalDecision{}, ctx.Err()
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := runner.StartAsync(ctx, GoalRequest{ID: "goal", Objective: "finish"})
+	if err != nil {
+		t.Fatalf("StartAsync() error = %v", err)
+	}
+	select {
+	case <-evaluationStarted:
+	case <-time.After(time.Second):
+		t.Fatal("goal evaluator did not start")
+	}
+
+	if err := source.SaveSession(ctx); !errors.Is(err, ErrAgentRunning) {
+		t.Fatalf("SaveSession(goal evaluation) error = %v, want ErrAgentRunning", err)
+	}
+	forkCtx, cancelFork := context.WithTimeout(ctx, 20*time.Millisecond)
+	_, err = manager.Fork(forkCtx, "source-goal", CreateSessionOptions{ID: "goal-branch-too-early"})
+	cancelFork()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Fork(goal evaluation) error = %v, want deadline exceeded", err)
+	}
+	if _, err := store.Load(ctx, "goal-branch-too-early"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("timed-out Fork created a target: %v", err)
+	}
+	updateCtx, cancelUpdate := context.WithTimeout(ctx, 20*time.Millisecond)
+	_, err = manager.UpdateMetadata(updateCtx, "source-goal", SessionMetadata{Title: "too early"})
+	cancelUpdate()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("UpdateMetadata(goal evaluation) error = %v, want deadline exceeded", err)
+	}
+
+	close(releaseEvaluation)
+	result, err := run.Wait()
+	if err != nil || result == nil || result.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("goal Wait() = %#v, %v, want completed", result, err)
+	}
+	branch, err := manager.Fork(ctx, "source-goal", CreateSessionOptions{ID: "goal-branch"})
+	if err != nil {
+		t.Fatalf("Fork(settled goal) error = %v", err)
+	}
+	if got := schemaMessageContents(branch.History()); !slices.Equal(got, []string{"finish", "work complete"}) {
+		t.Fatalf("forked goal history = %v", got)
+	}
+	updated, err := manager.UpdateMetadata(ctx, "source-goal", SessionMetadata{Title: "settled"})
+	if err != nil || updated.Title != "settled" {
+		t.Fatalf("UpdateMetadata(settled goal) = %#v, %v", updated, err)
+	}
+}
+
 func TestSessionManagerSerializesConcurrentOpen(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()

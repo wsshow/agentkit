@@ -893,12 +893,15 @@ func (a *Agent) sessionWhenIdle(ctx context.Context) (*Session, error) {
 			return nil, err
 		}
 		a.mu.Lock()
-		if !a.running {
+		if !a.running && a.goalRun == "" {
 			session := a.sessionLocked()
 			a.mu.Unlock()
 			return session, nil
 		}
 		done := a.done
+		if a.goalDone != nil {
+			done = a.goalDone
+		}
 		a.mu.Unlock()
 		select {
 		case <-done:
@@ -938,7 +941,7 @@ func (a *Agent) saveSession(ctx context.Context, metadata *SessionMetadata, allo
 		a.mu.Unlock()
 		return ErrSessionStale
 	}
-	if a.running && !allowRunning {
+	if (a.running || a.goalRun != "") && !allowRunning {
 		a.mu.Unlock()
 		return ErrAgentRunning
 	}
