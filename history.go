@@ -1,3 +1,4 @@
+//lint:file-ignore SA1019 AgentKit must deep-clone Eino's deprecated MultiContent field for persisted-history compatibility.
 package agentkit
 
 import "github.com/cloudwego/eino/schema"
@@ -108,14 +109,44 @@ func cloneHistoryMessage(msg *schema.Message) *schema.Message {
 		return nil
 	}
 	out := *msg
-	//lint:ignore SA1019 Preserve Eino's legacy multimodal field in history snapshots.
-	out.MultiContent = append([]schema.ChatMessagePart(nil), msg.MultiContent...)
+	out.MultiContent = cloneLegacyMessageParts(msg.MultiContent)
 	out.UserInputMultiContent = cloneMessageInputParts(msg.UserInputMultiContent)
 	out.AssistantGenMultiContent = cloneMessageOutputParts(msg.AssistantGenMultiContent)
 	out.ToolCalls = cloneToolCalls(msg.ToolCalls)
 	out.ResponseMeta = cloneResponseMeta(msg.ResponseMeta)
 	out.Extra = cloneMap(msg.Extra)
 	return &out
+}
+
+func cloneLegacyMessageParts(parts []schema.ChatMessagePart) []schema.ChatMessagePart {
+	if parts == nil {
+		return nil
+	}
+	out := make([]schema.ChatMessagePart, len(parts))
+	for i, part := range parts {
+		out[i] = part
+		if part.ImageURL != nil {
+			image := *part.ImageURL
+			image.Extra = cloneMap(part.ImageURL.Extra)
+			out[i].ImageURL = &image
+		}
+		if part.AudioURL != nil {
+			audio := *part.AudioURL
+			audio.Extra = cloneMap(part.AudioURL.Extra)
+			out[i].AudioURL = &audio
+		}
+		if part.VideoURL != nil {
+			video := *part.VideoURL
+			video.Extra = cloneMap(part.VideoURL.Extra)
+			out[i].VideoURL = &video
+		}
+		if part.FileURL != nil {
+			file := *part.FileURL
+			file.Extra = cloneMap(part.FileURL.Extra)
+			out[i].FileURL = &file
+		}
+	}
+	return out
 }
 
 func cloneMessageInputParts(parts []schema.MessageInputPart) []schema.MessageInputPart {
