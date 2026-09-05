@@ -1,0 +1,248 @@
+package agentkit
+
+import (
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/cloudwego/eino/schema"
+)
+
+func TestToolPolicyLimitsToolResultAndReportsOutcome(t *testing.T) {
+	ctx := context.Background()
+	tool := MustMockTool("large", "return a large result", func(context.Context, string) (string, error) {
+		return "甲乙丙丁戊", nil
+	})
+	call, err := tool.Invocation("large-call", "")
+	if err != nil {
+		t.Fatalf("Invocation() error = %v", err)
+	}
+	var before ToolInvocation
+	var after ToolOutcome
+	agent, err := New(ctx, &Config{
+		Model: NewMockChatModel(
+			MockModelCalls(call),
+			MockModelTextAfterToolResult(call.CallID),
+		),
+		Tools: MockTools(tool),
+		ToolPolicy: &ToolPolicy{
+			MaxResultChars: 4,
+			BeforeTool: func(_ context.Context, invocation ToolInvocation) error {
+				before = invocation
+				return nil
+			},
+			AfterTool: func(_ context.Context, _ ToolInvocation, outcome ToolOutcome) {
+				after = outcome
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	result, err := agent.Ask(ctx, "run it")
+	if err != nil {
+		t.Fatalf("Ask() error = %v", err)
+	}
+	if result.Text != "甲乙丙丁"+toolResultTruncatedMarker {
+		t.Fatalf("result text = %q", result.Text)
+	}
+	if before.Name != "large" || before.CallID != "large-call" {
+		t.Fatalf("before invocation = %#v", before)
+	}
+	if !after.Truncated || after.OutputChars != 4 || after.Err != nil || after.Duration <= 0 {
+		t.Fatalf("after outcome = %#v", after)
+	}
+}
+
+func TestToolPolicyUsesDefaultResultLimit(t *testing.T) {
+	value := strings.Repeat("a", DefaultToolResultMaxChars+1)
+	endpoint := (*ToolPolicy)(nil).executionMiddleware().Invokable(func(context.Context, *ToolInput) (*ToolOutput, error) {
+		return &ToolOutput{Result: value}, nil
+	})
+	output, err := endpoint(context.Background(), &ToolInput{Name: "large"})
+	if err != nil {
+		t.Fatalf("endpoint() error = %v", err)
+	}
+	if utf8.RuneCountInString(output.Result) != DefaultToolResultMaxChars+utf8.RuneCountInString(toolResultTruncatedMarker) {
+		t.Fatalf("limited result has %d characters", utf8.RuneCountInString(output.Result))
+	}
+}
+
+func TestToolPolicyCanDisableResultLimit(t *testing.T) {
+	policy := &ToolPolicy{MaxResultChars: -1}
+	value := strings.Repeat("a", DefaultToolResultMaxChars+1)
+	limited, chars, truncated := limitText(value, policy.maxResultChars())
+	if limited != value || chars != len(value) || truncated {
+		t.Fatalf("limitText() = (%d chars, %v), want unchanged", chars, truncated)
+	}
+}
+
+func TestToolPolicyTimeout(t *testing.T) {
+	ctx := context.Background()
+	tool := MustMockTool("wait", "wait for cancellation", func(ctx context.Context, _ string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	call, err := tool.Invocation("wait-call", "")
+	if err != nil {
+		t.Fatalf("Invocation() error = %v", err)
+	}
+	var outcome ToolOutcome
+	agent, err := New(ctx, &Config{
+		Model: NewMockChatModel(MockModelCalls(call)),
+		Tools: MockTools(tool),
+		ToolPolicy: &ToolPolicy{
+			Timeout: 20 * time.Millisecond,
+			AfterTool: func(_ context.Context, _ ToolInvocation, got ToolOutcome) {
+				outcome = got
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	_, err = agent.Ask(ctx, "wait")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Ask() error = %v, want deadline exceeded", err)
+	}
+	if !errors.Is(outcome.Err, context.DeadlineExceeded) {
+		t.Fatalf("outcome error = %v, want deadline exceeded", outcome.Err)
+	}
+}
+
+func TestToolPolicyBeforeToolCanRejectCall(t *testing.T) {
+	want := errors.New("approval required")
+	policy := &ToolPolicy{
+		BeforeTool: func(context.Context, ToolInvocation) error { return want },
+	}
+	called := false
+	endpoint := policy.executionMiddleware().Invokable(func(context.Context, *ToolInput) (*ToolOutput, error) {
+		called = true
+		return &ToolOutput{Result: "unexpected"}, nil
+	})
+	_, err := endpoint(context.Background(), &ToolInput{Name: "dangerous"})
+	if !errors.Is(err, want) || called {
+		t.Fatalf("endpoint error = %v, called = %v", err, called)
+	}
+}
+
+func TestToolPolicyLimitsTextStream(t *testing.T) {
+	var outcome ToolOutcome
+	policy := &ToolPolicy{
+		MaxResultChars: 4,
+		AfterTool: func(_ context.Context, _ ToolInvocation, got ToolOutcome) {
+			outcome = got
+		},
+	}
+	endpoint := policy.executionMiddleware().Streamable(func(context.Context, *ToolInput) (*StreamToolOutput, error) {
+		return &StreamToolOutput{Result: schema.StreamReaderFromArray([]string{"你好", "世界", "!"})}, nil
+	})
+	output, err := endpoint(context.Background(), &ToolInput{Name: "stream"})
+	if err != nil {
+		t.Fatalf("endpoint() error = %v", err)
+	}
+	var result strings.Builder
+	for {
+		chunk, recvErr := output.Result.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("Recv() error = %v", recvErr)
+		}
+		result.WriteString(chunk)
+	}
+	output.Result.Close()
+	if result.String() != "你好世界"+toolResultTruncatedMarker {
+		t.Fatalf("stream result = %q", result.String())
+	}
+	if !outcome.Truncated || outcome.OutputChars != 4 {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+}
+
+func TestToolPolicyLimitsEnhancedResultWithoutMutatingSource(t *testing.T) {
+	policy := &ToolPolicy{MaxResultChars: 3}
+	source := &schema.ToolResult{Parts: []schema.ToolOutputPart{
+		{Type: schema.ToolPartTypeText, Text: "ab"},
+		{Type: schema.ToolPartTypeImage},
+		{Type: schema.ToolPartTypeText, Text: "cdef"},
+		{Type: schema.ToolPartTypeText, Text: "later"},
+	}}
+	endpoint := policy.executionMiddleware().EnhancedInvokable(func(context.Context, *ToolInput) (*EnhancedInvokableToolOutput, error) {
+		return &EnhancedInvokableToolOutput{Result: source}, nil
+	})
+	output, err := endpoint(context.Background(), &ToolInput{Name: "enhanced"})
+	if err != nil {
+		t.Fatalf("endpoint() error = %v", err)
+	}
+	if len(output.Result.Parts) != 3 || output.Result.Parts[0].Text != "ab" || output.Result.Parts[1].Type != schema.ToolPartTypeImage || output.Result.Parts[2].Text != "c"+toolResultTruncatedMarker {
+		t.Fatalf("limited parts = %#v", output.Result.Parts)
+	}
+	if source.Parts[2].Text != "cdef" || len(source.Parts) != 4 {
+		t.Fatalf("source was mutated: %#v", source.Parts)
+	}
+}
+
+func TestToolPolicyLimitsEnhancedStream(t *testing.T) {
+	var outcome ToolOutcome
+	policy := &ToolPolicy{
+		MaxResultChars: 3,
+		AfterTool: func(_ context.Context, _ ToolInvocation, got ToolOutcome) {
+			outcome = got
+		},
+	}
+	endpoint := policy.executionMiddleware().EnhancedStreamable(func(context.Context, *ToolInput) (*EnhancedStreamableToolOutput, error) {
+		return &EnhancedStreamableToolOutput{Result: schema.StreamReaderFromArray([]*schema.ToolResult{
+			{Parts: []schema.ToolOutputPart{{Type: schema.ToolPartTypeText, Text: "ab"}}},
+			{Parts: []schema.ToolOutputPart{{Type: schema.ToolPartTypeText, Text: "cd"}}},
+			{Parts: []schema.ToolOutputPart{{Type: schema.ToolPartTypeText, Text: "ignored"}}},
+		})}, nil
+	})
+	output, err := endpoint(context.Background(), &ToolInput{Name: "enhanced-stream"})
+	if err != nil {
+		t.Fatalf("endpoint() error = %v", err)
+	}
+	var texts []string
+	for {
+		chunk, recvErr := output.Result.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("Recv() error = %v", recvErr)
+		}
+		for _, part := range chunk.Parts {
+			if part.Type == schema.ToolPartTypeText {
+				texts = append(texts, part.Text)
+			}
+		}
+	}
+	output.Result.Close()
+	if strings.Join(texts, "") != "abc"+toolResultTruncatedMarker {
+		t.Fatalf("stream text = %q", strings.Join(texts, ""))
+	}
+	if !outcome.Truncated || outcome.OutputChars != 3 {
+		t.Fatalf("outcome = %#v", outcome)
+	}
+}
+
+func TestToolPolicyValidatesExecutionLimits(t *testing.T) {
+	for _, policy := range []*ToolPolicy{
+		{Timeout: -time.Second},
+		{MaxResultChars: -2},
+	} {
+		_, err := New(context.Background(), &Config{Model: NewMockChatModel(), ToolPolicy: policy})
+		if err == nil {
+			t.Fatalf("New() error = nil for policy %#v", policy)
+		}
+	}
+}

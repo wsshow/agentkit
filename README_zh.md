@@ -21,7 +21,7 @@
 - **自动上下文压缩** — 超过 token 或消息阈值时自动摘要，完整历史与模型上下文分离保存
 - **按需技能** — 从本地目录或自定义后端加载可复用的 `SKILL.md` 指令
 - **MCP 连接管理** — 连接 stdio、SSE、Streamable HTTP 服务器，自动发现、重连、筛选并释放资源
-- **工具集成** — 接入任何 Eino 兼容工具，自动处理工具调用
+- **受保护的工具集成** — 接入任何 Eino 兼容工具，内置结果大小限制、可选超时、审计钩子和自动调用处理
 - **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
 ## 安装
@@ -476,6 +476,8 @@ model := agentkit.NewMockChatModel(
 ```go
 ToolPolicy: &agentkit.ToolPolicy{
     Sequential: true, // 默认并行执行
+    Timeout: 30 * time.Second,
+    MaxResultChars: 50_000,
     Aliases: map[string]agentkit.ToolAlias{
         "web_search": {
             Names: []string{"search"},
@@ -490,10 +492,16 @@ ToolPolicy: &agentkit.ToolPolicy{
     UnknownTool: func(ctx context.Context, name, arguments string) (string, error) {
         return "该工具不可用，请选择已经注册的工具。", nil
     },
+    BeforeTool: func(ctx context.Context, call agentkit.ToolInvocation) error {
+        return authorize(call.Name, call.Arguments)
+    },
+    AfterTool: func(ctx context.Context, call agentkit.ToolInvocation, outcome agentkit.ToolOutcome) {
+        recordToolRun(call, outcome)
+    },
 }
 ```
 
-`New` 会根据全部本地、Skill 和 MCP 工具校验别名，别名冲突或引用不存在的正式工具都会立即失败。高级拦截场景可通过 `Middlewares` 传入 `agentkit.ToolMiddleware`。
+`New` 会根据全部本地、Skill 和 MCP 工具校验别名，别名冲突或引用不存在的正式工具都会立即失败。所有文本工具结果默认最多保留 `DefaultToolResultMaxChars`（100,000 个 Unicode 字符），截断时会附加提示标记；将 `MaxResultChars` 设为 `-1` 可关闭限制。`Timeout` 使用 `context` 协作取消，因此自定义工具应在 `ctx.Done()` 关闭后及时停止。`BeforeTool` 可通过返回错误拒绝调用，`AfterTool` 会收到耗时、错误、保留文本大小和截断信息。工具默认并行执行，因此钩子必须并发安全。这些保护统一覆盖普通、流式及多模态工具。高级拦截场景仍可通过 `Middlewares` 传入 `agentkit.ToolMiddleware`。
 
 ### 转向与后续消息
 

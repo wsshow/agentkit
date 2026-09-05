@@ -21,7 +21,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **Automatic context compaction** — Summarize contexts over token or message limits while preserving full conversation history
 - **On-demand skills** — Load reusable `SKILL.md` instructions from local directories or a custom backend
 - **Managed MCP connections** — Connect stdio, SSE, and Streamable HTTP servers with discovery, reconnection, filtering, and cleanup
-- **Tool integration** — Plug in any Eino-compatible tool with automatic tool-call handling
+- **Guarded tool integration** — Plug in any Eino-compatible tool with result-size limits, optional timeouts, audit hooks, and automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
 ## Installation
@@ -476,6 +476,8 @@ Configure tool dispatch in one place without constructing an Eino `ToolsNode` di
 ```go
 ToolPolicy: &agentkit.ToolPolicy{
     Sequential: true, // default is parallel execution
+    Timeout: 30 * time.Second,
+    MaxResultChars: 50_000,
     Aliases: map[string]agentkit.ToolAlias{
         "web_search": {
             Names: []string{"search"},
@@ -490,10 +492,16 @@ ToolPolicy: &agentkit.ToolPolicy{
     UnknownTool: func(ctx context.Context, name, arguments string) (string, error) {
         return "That tool is unavailable; choose a registered tool.", nil
     },
+    BeforeTool: func(ctx context.Context, call agentkit.ToolInvocation) error {
+        return authorize(call.Name, call.Arguments)
+    },
+    AfterTool: func(ctx context.Context, call agentkit.ToolInvocation, outcome agentkit.ToolOutcome) {
+        recordToolRun(call, outcome)
+    },
 }
 ```
 
-Aliases are validated against all local, skill, and MCP tool names during `New`; collisions and references to missing canonical tools fail immediately. `Middlewares` accepts `agentkit.ToolMiddleware` for advanced interception.
+Aliases are validated against all local, skill, and MCP tool names during `New`; collisions and references to missing canonical tools fail immediately. Every text tool result is limited to `DefaultToolResultMaxChars` (100,000 Unicode characters) by default and receives a truncation marker when cut. Set `MaxResultChars` to `-1` to disable the limit. `Timeout` uses cooperative context cancellation, so custom tools should stop promptly when `ctx.Done()` is closed. `BeforeTool` may reject a call by returning an error, while `AfterTool` receives duration, error, retained text size, and truncation metadata. Hooks must be concurrency-safe because tools run in parallel by default. The same protections cover normal, streaming, and multimodal tools. `Middlewares` accepts `agentkit.ToolMiddleware` for advanced interception.
 
 ### Steering & Follow-Up
 

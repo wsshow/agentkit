@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/compose"
 )
@@ -20,11 +21,20 @@ type ToolPolicy struct {
 	UnknownTool      func(ctx context.Context, name, arguments string) (string, error)
 	RewriteArguments func(ctx context.Context, name, arguments string) (string, error)
 	Sequential       bool
-	Middlewares      []ToolMiddleware
+	// Timeout 限制单次工具调用（含钩子）的最长执行时间。零值表示不限制。
+	Timeout time.Duration
+	// MaxResultChars 限制返回给模型的文本字符数。零值使用 DefaultToolResultMaxChars，-1 表示不限制。
+	MaxResultChars int
+	// BeforeTool 在工具执行前调用；返回错误可拒绝本次调用。
+	BeforeTool func(ctx context.Context, call ToolInvocation) error
+	// AfterTool 在工具结束后调用，可用于审计和指标记录。
+	AfterTool   func(ctx context.Context, call ToolInvocation, outcome ToolOutcome)
+	Middlewares []ToolMiddleware
 }
 
 func (p *ToolPolicy) toolsNodeConfig(tools []Tool) compose.ToolsNodeConfig {
 	config := compose.ToolsNodeConfig{Tools: tools}
+	config.ToolCallMiddlewares = []compose.ToolMiddleware{p.executionMiddleware()}
 	if p == nil {
 		return config
 	}
@@ -42,7 +52,7 @@ func (p *ToolPolicy) toolsNodeConfig(tools []Tool) compose.ToolsNodeConfig {
 	config.UnknownToolsHandler = p.UnknownTool
 	config.ToolArgumentsHandler = p.RewriteArguments
 	config.ExecuteSequentially = p.Sequential
-	config.ToolCallMiddlewares = append([]compose.ToolMiddleware(nil), p.Middlewares...)
+	config.ToolCallMiddlewares = append(config.ToolCallMiddlewares, p.Middlewares...)
 	return config
 }
 
@@ -64,6 +74,12 @@ func validateToolPolicy(ctx context.Context, tools []Tool, skills *SkillsConfig,
 	}
 	if policy == nil {
 		return canonicalNames, nil
+	}
+	if policy.Timeout < 0 {
+		return nil, fmt.Errorf("agentkit: tool policy timeout must not be negative")
+	}
+	if policy.MaxResultChars < -1 {
+		return nil, fmt.Errorf("agentkit: tool policy max result chars must be -1 or greater")
 	}
 
 	allNames := make(map[string]string, len(canonicalNames)+len(policy.Aliases))
