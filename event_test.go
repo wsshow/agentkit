@@ -94,6 +94,41 @@ func TestEmitterIsolatesSubscriberPanics(t *testing.T) {
 	}
 }
 
+func TestEmitterDeeplyIsolatesInterruptInfo(t *testing.T) {
+	emitter := newEmitter()
+	emitter.Subscribe(func(event Event) {
+		info := event.Interrupt[0].Info.(map[string]any)
+		info["labels"].([]string)[0] = "changed"
+		info["nested"].(map[string]any)["value"] = "changed"
+	})
+	var received Event
+	emitter.Subscribe(func(event Event) { received = event })
+
+	original := Event{
+		Type: EventInterrupted,
+		Interrupt: []InterruptPoint{{
+			ID: "approval",
+			Info: map[string]any{
+				"labels": []string{"original"},
+				"nested": map[string]any{"value": "original"},
+			},
+		}},
+	}
+	emitter.Emit(original)
+
+	info := received.Interrupt[0].Info.(map[string]any)
+	if got := info["labels"].([]string)[0]; got != "original" {
+		t.Fatalf("second subscriber labels = %q, want original", got)
+	}
+	if got := info["nested"].(map[string]any)["value"]; got != "original" {
+		t.Fatalf("second subscriber nested value = %v, want original", got)
+	}
+	originalInfo := original.Interrupt[0].Info.(map[string]any)
+	if got := originalInfo["labels"].([]string)[0]; got != "original" {
+		t.Fatalf("original labels = %q, want original", got)
+	}
+}
+
 func assertOriginalEvent(t *testing.T, event Event) {
 	t.Helper()
 	if got := *event.ToolCalls[0].Index; got != 1 {

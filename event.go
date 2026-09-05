@@ -164,5 +164,13 @@ func cloneDelegation(info *DelegationInfo) *DelegationInfo {
 }
 
 func cloneInterruptPoints(points []InterruptPoint) []InterruptPoint {
-	return append([]InterruptPoint(nil), points...)
+	if points == nil {
+		return nil
+	}
+	cloned := make([]InterruptPoint, len(points))
+	for index, point := range points {
+		cloned[index] = point
+		cloned[index].Info = cloneMapValue(point.Info)
+	}
+	return cloned
 }
