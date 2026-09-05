@@ -50,7 +50,7 @@ func (r *GoalRunner) startLeaseHeartbeat(
 				return
 			case <-ticker.C:
 				renewCtx, renewCancel := context.WithTimeout(ctx, interval)
-				renewed, err := r.leaseStore.RenewGoalLease(renewCtx, current, r.leaseDuration)
+				renewed, err := renewGoalLease(renewCtx, r.leaseStore, current, r.leaseDuration)
 				renewCancel()
 				if err == nil {
 					if renewed == nil || renewed.GoalID != current.GoalID || renewed.Token != current.Token ||
@@ -65,7 +65,7 @@ func (r *GoalRunner) startLeaseHeartbeat(
 					return
 				}
 				if errors.Is(err, ErrGoalLeaseLost) || !time.Now().UTC().Before(current.ExpiresAt) {
-					heartbeat.setError(fmt.Errorf("%w: renew goal %q: %v", ErrGoalLeaseLost, lease.GoalID, err))
+					heartbeat.setError(fmt.Errorf("%w: renew goal %q: %w", ErrGoalLeaseLost, lease.GoalID, err))
 					cancel(ErrGoalLeaseLost)
 					return
 				}
@@ -118,7 +118,7 @@ func releaseGoalLease(ctx context.Context, store GoalLeaseStore, lease *GoalLeas
 	defer cancel()
 	released := make(chan error, 1)
 	go func() {
-		released <- store.ReleaseGoalLease(releaseCtx, lease)
+		released <- releaseStoredGoalLease(releaseCtx, store, lease)
 	}()
 	select {
 	case err := <-released:

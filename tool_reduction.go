@@ -47,7 +47,7 @@ func (b *toolResultBackend) Write(ctx context.Context, request *filesystem.Write
 	if request == nil {
 		return errors.New("agentkit: tool result write request is required")
 	}
-	if err := b.store.Save(ctx, &StoredToolResult{
+	if err := toolResultStoreSave(ctx, b.store, &StoredToolResult{
 		ID: request.FilePath, SessionID: b.sessionID, Content: request.Content,
 	}); err != nil {
 		return fmt.Errorf("agentkit: save reduced tool result: %w", err)
@@ -86,7 +86,11 @@ func newToolReduction(
 	store := cfg.Store
 	if store == nil && session != nil {
 		if provider, ok := session.Store.(ToolResultStoreProvider); ok {
-			store = provider.ToolResultStore()
+			var err error
+			store, err = providedStore("tool result store provider", provider.ToolResultStore)
+			if err != nil {
+				return nil, nil, nil, err
+			}
 		}
 	}
 	if store == nil {
@@ -156,7 +160,7 @@ func newToolResultReader(store ToolResultStore) (Tool, error) {
 			if input.Limit < 0 {
 				return "", errors.New("agentkit: tool result limit must not be negative")
 			}
-			result, err := store.Load(ctx, input.ID)
+			result, err := toolResultStoreLoad(ctx, store, input.ID)
 			if err != nil {
 				return "", err
 			}

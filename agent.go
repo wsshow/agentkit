@@ -162,7 +162,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	var loadedSession *Session
 	if cfg.Session != nil {
 		var err error
-		loadedSession, err = cfg.Session.Store.Load(ctx, cfg.Session.ID)
+		loadedSession, err = sessionStoreLoad(ctx, cfg.Session.Store, cfg.Session.ID)
 		if errors.Is(err, ErrSessionNotFound) {
 			now := time.Now().UTC()
 			loadedSession = &Session{ID: cfg.Session.ID, CreatedAt: now, UpdatedAt: now}
@@ -325,12 +325,16 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	store := cfg.CheckPointStore
 	if store == nil && cfg.Session != nil {
 		if provider, ok := cfg.Session.Store.(CheckpointStoreProvider); ok {
-			store = provider.CheckpointStore()
+			store, err = providedStore("checkpoint store provider", provider.CheckpointStore)
+			if err != nil {
+				return nil, errors.Join(err, closeMCPConnectionsAfterInitialization(ctx, cfg.MCP, mcpConnections))
+			}
 		}
 	}
 	if store == nil {
 		store = NewMemoryCheckpointStore()
 	}
+	store = guardCheckpointStore(store)
 	a.checkpointStore = store
 
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{
@@ -811,7 +815,7 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 	store := a.sessionStore
 	a.mu.Unlock()
 
-	if err := store.Save(ctx, session); err != nil {
+	if err := sessionStoreSave(ctx, store, session); err != nil {
 		return fmt.Errorf("agentkit: save session %q: %w", session.ID, err)
 	}
 

@@ -61,7 +61,11 @@ func pruneResourcesAt(
 		if !ok {
 			return report, errors.New("agentkit: completed goal retention requires GoalStoreProvider")
 		}
-		goals = provider.GoalStore()
+		provided, err := providedStore("goal store provider", provider.GoalStore)
+		if err != nil {
+			return report, err
+		}
+		goals = provided
 		if goals == nil {
 			return report, errors.New("agentkit: goal store provider returned nil")
 		}
@@ -72,7 +76,11 @@ func pruneResourcesAt(
 		if !ok {
 			return report, errors.New("agentkit: detached tool result retention requires ToolResultStoreProvider")
 		}
-		toolResults = provider.ToolResultStore()
+		provided, err := providedStore("tool result store provider", provider.ToolResultStore)
+		if err != nil {
+			return report, err
+		}
+		toolResults = provided
 		if toolResults == nil {
 			return report, errors.New("agentkit: tool result store provider returned nil")
 		}
@@ -80,7 +88,7 @@ func pruneResourcesAt(
 
 	var errs []error
 	if policy.SessionIdleTime > 0 {
-		infos, err := sessions.List(ctx)
+		infos, err := sessionStoreList(ctx, sessions)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("agentkit: list sessions for retention: %w", err))
 		} else {
@@ -92,7 +100,7 @@ func pruneResourcesAt(
 				if info.UpdatedAt.IsZero() || info.UpdatedAt.After(cutoff) {
 					continue
 				}
-				if err := sessions.Delete(ctx, info.ID); err != nil {
+				if err := sessionStoreDelete(ctx, sessions, info.ID); err != nil {
 					errs = append(errs, fmt.Errorf("agentkit: prune session %q: %w", info.ID, err))
 					continue
 				}
@@ -101,7 +109,7 @@ func pruneResourcesAt(
 		}
 	}
 	if policy.CompletedGoalAge > 0 && !retentionContextDone(ctx, &errs) {
-		infos, err := goals.List(ctx)
+		infos, err := goalStoreList(ctx, goals)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("agentkit: list completed goals for retention: %w", err))
 		} else {
@@ -113,7 +121,7 @@ func pruneResourcesAt(
 				if info.Status != GoalStatusCompleted || info.UpdatedAt.IsZero() || info.UpdatedAt.After(cutoff) {
 					continue
 				}
-				if err := goals.Delete(ctx, info.ID); err != nil {
+				if err := goalStoreDelete(ctx, goals, info.ID); err != nil {
 					errs = append(errs, fmt.Errorf("agentkit: prune completed goal %q: %w", info.ID, err))
 					continue
 				}
@@ -122,7 +130,7 @@ func pruneResourcesAt(
 		}
 	}
 	if policy.DetachedToolResultAge > 0 && !retentionContextDone(ctx, &errs) {
-		infos, err := toolResults.List(ctx)
+		infos, err := toolResultStoreList(ctx, toolResults)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("agentkit: list detached tool results for retention: %w", err))
 		} else {
@@ -134,7 +142,7 @@ func pruneResourcesAt(
 				if info.SessionID != "" || info.CreatedAt.IsZero() || info.CreatedAt.After(cutoff) {
 					continue
 				}
-				if err := toolResults.Delete(ctx, info.ID); err != nil {
+				if err := toolResultStoreDelete(ctx, toolResults, info.ID); err != nil {
 					errs = append(errs, fmt.Errorf("agentkit: prune detached tool result %q: %w", info.ID, err))
 					continue
 				}

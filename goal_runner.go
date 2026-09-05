@@ -226,7 +226,14 @@ func NewGoalRunner(agent *Agent, cfg *GoalRunnerConfig) (*GoalRunner, error) {
 		if !ok {
 			return nil, errors.New("agentkit: goal store is required because the session store does not provide one")
 		}
-		store = provider.GoalStore()
+		var err error
+		store, err = providedStore("goal store provider", provider.GoalStore)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if store == nil {
+		return nil, errors.New("agentkit: goal store is required")
 	}
 	evaluator := cfg.Evaluator
 	if evaluator == nil {
@@ -305,7 +312,7 @@ func (r *GoalRunner) beginStart(ctx context.Context, request GoalRequest) (runCt
 			retErr = errors.Join(retErr, release())
 		}
 	}()
-	if _, err := r.store.Load(runCtx, request.ID); err == nil {
+	if _, err := goalStoreLoad(runCtx, r.store, request.ID); err == nil {
 		return nil, nil, nil, fmt.Errorf("%w: %s", ErrGoalExists, request.ID)
 	} else if !errors.Is(err, ErrGoalNotFound) {
 		return nil, nil, nil, err
@@ -553,7 +560,7 @@ func (r *GoalRunner) List(ctx context.Context) ([]GoalInfo, error) {
 	if session == nil {
 		return nil, ErrSessionDisabled
 	}
-	all, err := r.store.List(ctx)
+	all, err := goalStoreList(ctx, r.store)
 	if err != nil {
 		return nil, err
 	}
@@ -621,7 +628,7 @@ func (r *GoalRunner) Pause(ctx context.Context, id string) (retErr error) {
 		r.activeMu.Unlock()
 		if lease == nil {
 			var err error
-			lease, err = r.leaseStore.AcquireGoalLease(ctx, id, r.workerID, r.leaseDuration)
+			lease, err = acquireGoalLease(ctx, r.leaseStore, id, r.workerID, r.leaseDuration)
 			if err != nil {
 				return err
 			}
@@ -673,16 +680,16 @@ func (r *GoalRunner) Clear(ctx context.Context, id string) (retErr error) {
 		return ErrGoalRunning
 	}
 	if r.leaseStore != nil {
-		lease, err := r.leaseStore.AcquireGoalLease(ctx, id, r.workerID, r.leaseDuration)
+		lease, err := acquireGoalLease(ctx, r.leaseStore, id, r.workerID, r.leaseDuration)
 		if err != nil {
 			return err
 		}
 		defer func() {
 			retErr = errors.Join(retErr, r.releaseLease(context.WithoutCancel(ctx), lease))
 		}()
-		return r.leaseStore.DeleteGoalWithLease(ctx, id, lease)
+		return deleteGoalWithLease(ctx, r.leaseStore, id, lease)
 	}
-	return r.store.Delete(ctx, id)
+	return goalStoreDelete(ctx, r.store, id)
 }
 
 // Retry 明确允许重新执行一个无法确认是否产生副作用的未完成步骤。
@@ -788,7 +795,7 @@ func (r *GoalRunner) begin(ctx context.Context, id string) (context.Context, fun
 	var lease *GoalLease
 	if r.leaseStore != nil {
 		var err error
-		lease, err = r.leaseStore.AcquireGoalLease(ctx, id, r.workerID, r.leaseDuration)
+		lease, err = acquireGoalLease(ctx, r.leaseStore, id, r.workerID, r.leaseDuration)
 		if err != nil {
 			r.runMu.Unlock()
 			return nil, nil, err
@@ -1026,7 +1033,7 @@ func (r *GoalRunner) loadForAgent(ctx context.Context, id string) (*Goal, error)
 	if err := validateGoalContextAndID(ctx, id); err != nil {
 		return nil, err
 	}
-	goal, err := r.store.Load(ctx, id)
+	goal, err := goalStoreLoad(ctx, r.store, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1055,9 +1062,9 @@ func (r *GoalRunner) saveWithLease(ctx context.Context, goal *Goal, lease *GoalL
 	goal.UpdatedAt = now
 	var err error
 	if r.leaseStore != nil && lease != nil && lease.GoalID == goal.ID {
-		err = r.leaseStore.SaveGoalWithLease(ctx, goal, lease)
+		err = saveGoalWithLease(ctx, r.leaseStore, goal, lease)
 	} else {
-		err = r.store.Save(ctx, goal)
+		err = goalStoreSave(ctx, r.store, goal)
 	}
 	if err != nil {
 		return err

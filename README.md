@@ -19,7 +19,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **Reasoning model support** — First-class support for thinking/reasoning models (DeepSeek-R1, o1, etc.) with streaming reasoning output
 - **Guarded model integration** — Convert provider panics from generation and stream reads into ordinary, retryable errors
 - **Multimodal input** — Send text, images, audio, video, and files via `Send()` with ergonomic constructors
-- **Session persistence** — Automatically save and restore complete conversations with built-in concurrent memory and atomic file stores
+- **Session persistence** — Automatically save and restore conversations with concurrent memory, atomic file stores, and panic-isolated custom backends
 - **Durable goal runs** — Persist an objective, evaluate completion after each step, and resume safely after cancellation or restart
 - **Automatic context compaction** — Summarize contexts over token or message limits while preserving full conversation history
 - **On-demand skills** — Load reusable `SKILL.md` instructions from local directories or a custom backend
