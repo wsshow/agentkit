@@ -19,11 +19,6 @@ func TestNewValidatesConfig(t *testing.T) {
 		want string
 	}{
 		{
-			name: "nil context",
-			cfg:  &Config{Model: NewMockChatModel()},
-			want: "context is required",
-		},
-		{
 			name: "nil config",
 			ctx:  context.Background(),
 			want: "config is required",
@@ -211,7 +206,7 @@ func TestAgentCannotRunAfterClose(t *testing.T) {
 	}
 }
 
-func TestAgentRunMethodsValidateContextBeforeChangingState(t *testing.T) {
+func TestAgentRunMethodsRejectCanceledContextBeforeChangingState(t *testing.T) {
 	tests := []struct {
 		name string
 		run  func(*Agent, context.Context) error
@@ -231,16 +226,18 @@ func TestAgentRunMethodsValidateContextBeforeChangingState(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name+" rejects nil context", func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			agent, err := New(context.Background(), &Config{Model: NewMockChatModel(MockModelText("unused"))})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer agent.Close()
 
-			err = tt.run(agent, nil)
-			if err == nil || !strings.Contains(err.Error(), "context is required") {
-				t.Fatalf("run error = %v, want context is required", err)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			err = tt.run(agent, ctx)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("run error = %v, want context.Canceled", err)
 			}
 			if got := agent.History(); len(got) != 0 {
 				t.Fatalf("history changed after rejected run: %#v", got)

@@ -120,7 +120,6 @@ func TestQuerySessionsValidatesInputAndGuardsBackendPanics(t *testing.T) {
 		query SessionQuery
 		want  error
 	}{
-		{name: "nil context", store: store, want: errors.New("context is required")},
 		{name: "nil store", ctx: ctx, want: errors.New("session store is required")},
 		{name: "large limit", ctx: ctx, store: store, query: SessionQuery{Limit: MaxSessionPageSize + 1}, want: ErrInvalidSessionQuery},
 		{name: "bad cursor", ctx: ctx, store: store, query: SessionQuery{Cursor: "not-a-cursor"}, want: ErrInvalidSessionCursor},
