@@ -549,6 +549,26 @@ func (r *subAgentRuntime) delegationForAgent(name string, path []string) *Delega
 	return &info
 }
 
+func (r *subAgentRuntime) onlyActiveDelegation() *DelegationInfo {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var active *subAgentDelegation
+	for _, delegation := range r.activeByAgent {
+		if active != nil && active != delegation {
+			return nil
+		}
+		active = delegation
+	}
+	if active == nil {
+		return nil
+	}
+	info := cloneDelegationInfo(active.info)
+	return &info
+}
+
 func (r *subAgentRuntime) resetBudget() {
 	if r == nil {
 		return

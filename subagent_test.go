@@ -459,6 +459,8 @@ func TestSubAgentHITLRestoresAcrossAgentRecreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first New() error = %v", err)
 	}
+	firstRecorder := newMockEventRecorder()
+	first.Subscribe(firstRecorder.Record)
 	result, err := first.Ask(ctx, "delegate cleanup")
 	if err != nil {
 		t.Fatalf("first Ask() error = %v", err)
@@ -469,6 +471,10 @@ func TestSubAgentHITLRestoresAcrossAgentRecreation(t *testing.T) {
 	interruptID := result.Interrupts[0].ID
 	if result.Interrupts[0].Info != "approve cleanup" {
 		t.Fatalf("interrupt = %#v", result.Interrupts[0])
+	}
+	interrupted := firstRecorder.Last(EventInterrupted)
+	if interrupted == nil || interrupted.Delegation == nil || interrupted.Delegation.ID != delegateID {
+		t.Fatalf("interrupted event = %#v, want correlated delegation", interrupted)
 	}
 	if err := first.Close(); err != nil {
 		t.Fatalf("first Close() error = %v", err)

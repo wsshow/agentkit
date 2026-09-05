@@ -223,11 +223,15 @@ func (a *Agent) processAction(agentName string, action *adk.AgentAction) {
 			points = append(points, InterruptPoint{ID: ic.ID, Info: ic.Info})
 		}
 		a.markInterrupted(points)
-		a.emtr.Emit(Event{
+		event := Event{
 			Type:      EventInterrupted,
 			Agent:     agentName,
 			Interrupt: points,
-		})
+		}
+		if a.subAgents != nil {
+			event.Delegation = a.subAgents.onlyActiveDelegation()
+		}
+		a.emtr.Emit(event)
 	}
 }
 
