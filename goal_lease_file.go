@@ -86,8 +86,14 @@ func (s *FileGoalStore) ReleaseGoalLease(ctx context.Context, lease *GoalLease) 
 	if current.Token != lease.Token {
 		return lostGoalLeaseError(lease)
 	}
-	if err := os.Remove(s.leasePath(lease.GoalID)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(s.leasePath(lease.GoalID)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("agentkit: release goal lease %q: %w", lease.GoalID, err)
+	}
+	if err := syncFileStoreDirectory(s.dir); err != nil {
+		return fmt.Errorf("agentkit: sync goal directory: %w", err)
 	}
 	return nil
 }
@@ -187,6 +193,9 @@ func (s *FileGoalStore) writeLeaseLocked(lease *GoalLease) error {
 		return fmt.Errorf("agentkit: commit goal lease %q: %w", lease.GoalID, err)
 	}
 	committed = true
+	if err = syncFileStoreDirectory(s.dir); err != nil {
+		return fmt.Errorf("agentkit: sync goal directory: %w", err)
+	}
 	return nil
 }
 

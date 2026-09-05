@@ -310,7 +310,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 })
 ```
 
-The file store uses safe hashed file names and atomic replacement, preventing path traversal through session IDs and half-written JSON after a crash. Manage sessions directly through the store:
+The file store uses safe hashed file names, synced temporary files, atomic replacement, and synced directory metadata, preventing path traversal through session IDs and half-written or uncommitted snapshots after a crash. Manage sessions directly through the store:
 
 ```go
 sessions, err := store.List(ctx)

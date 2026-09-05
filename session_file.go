@@ -143,6 +143,9 @@ func (s *FileSessionStore) Save(ctx context.Context, session *Session) error {
 		return fmt.Errorf("agentkit: commit session %q: %w", session.ID, err)
 	}
 	committed = true
+	if err = syncFileStoreDirectory(s.dir); err != nil {
+		return fmt.Errorf("agentkit: sync session directory: %w", err)
+	}
 	return nil
 }
 
@@ -171,8 +174,16 @@ func (s *FileSessionStore) Delete(ctx context.Context, id string) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.Remove(s.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	removed := false
+	if err := os.Remove(s.path(id)); err == nil {
+		removed = true
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return errors.Join(loadErr, fmt.Errorf("agentkit: delete session %q: %w", id, err))
+	}
+	if removed {
+		if err := syncFileStoreDirectory(s.dir); err != nil {
+			return errors.Join(loadErr, fmt.Errorf("agentkit: sync session directory: %w", err))
+		}
 	}
 	return loadErr
 }

@@ -69,6 +69,9 @@ func (s *FileCheckpointStore) Set(ctx context.Context, id string, value []byte) 
 		return fmt.Errorf("agentkit: commit checkpoint %q: %w", id, err)
 	}
 	committed = true
+	if err = syncFileStoreDirectory(s.dir); err != nil {
+		return fmt.Errorf("agentkit: sync checkpoint directory: %w", err)
+	}
 	return nil
 }
 
@@ -96,8 +99,14 @@ func (s *FileCheckpointStore) Delete(ctx context.Context, id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.Remove(s.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(s.path(id)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("agentkit: delete checkpoint %q: %w", id, err)
+	}
+	if err := syncFileStoreDirectory(s.dir); err != nil {
+		return fmt.Errorf("agentkit: sync checkpoint directory: %w", err)
 	}
 	return nil
 }

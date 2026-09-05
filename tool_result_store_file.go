@@ -95,6 +95,9 @@ func (s *FileToolResultStore) Save(ctx context.Context, result *StoredToolResult
 		return fmt.Errorf("agentkit: commit tool result %q: %w", result.ID, err)
 	}
 	committed = true
+	if err = syncFileStoreDirectory(s.dir); err != nil {
+		return fmt.Errorf("agentkit: sync tool result directory: %w", err)
+	}
 	return nil
 }
 
@@ -105,8 +108,14 @@ func (s *FileToolResultStore) Delete(ctx context.Context, id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.Remove(s.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(s.path(id)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return fmt.Errorf("agentkit: delete tool result %q: %w", id, err)
+	}
+	if err := syncFileStoreDirectory(s.dir); err != nil {
+		return fmt.Errorf("agentkit: sync tool result directory: %w", err)
 	}
 	return nil
 }

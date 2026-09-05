@@ -113,6 +113,9 @@ func (s *FileGoalStore) saveLocked(goal *Goal) error {
 		return fmt.Errorf("agentkit: commit goal %q: %w", goal.ID, err)
 	}
 	committed = true
+	if err = syncFileStoreDirectory(s.dir); err != nil {
+		return fmt.Errorf("agentkit: sync goal directory: %w", err)
+	}
 	return nil
 }
 
@@ -128,13 +131,24 @@ func (s *FileGoalStore) Delete(ctx context.Context, id string) error {
 
 func (s *FileGoalStore) deleteLocked(id string) error {
 	var goalErr, leaseErr error
-	if err := os.Remove(s.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	removed := false
+	if err := os.Remove(s.path(id)); err == nil {
+		removed = true
+	} else if !errors.Is(err, os.ErrNotExist) {
 		goalErr = fmt.Errorf("agentkit: delete goal %q: %w", id, err)
 	}
-	if err := os.Remove(s.leasePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(s.leasePath(id)); err == nil {
+		removed = true
+	} else if !errors.Is(err, os.ErrNotExist) {
 		leaseErr = fmt.Errorf("agentkit: delete goal lease %q: %w", id, err)
 	}
-	return errors.Join(goalErr, leaseErr)
+	var syncErr error
+	if removed {
+		if err := syncFileStoreDirectory(s.dir); err != nil {
+			syncErr = fmt.Errorf("agentkit: sync goal directory: %w", err)
+		}
+	}
+	return errors.Join(goalErr, leaseErr, syncErr)
 }
 
 // List 按更新时间从新到旧列出目标。
