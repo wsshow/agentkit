@@ -14,8 +14,9 @@ func generateModelWithFailover(
 	input []*schema.Message,
 	retry *ModelRetryConfig,
 	failover *ModelFailoverConfig,
+	options ...ModelOption,
 ) (*schema.Message, error) {
-	output, err := generateModelWithRetry(ctx, primary, input, retry)
+	output, err := generateModelWithRetry(ctx, primary, input, retry, options...)
 	if err == nil || failover == nil || failover.GetFailoverModel == nil || failover.ShouldFailover == nil {
 		return output, err
 	}
@@ -43,7 +44,7 @@ func generateModelWithFailover(
 		if currentInput == nil {
 			currentInput = input
 		}
-		lastOutput, lastErr = generateModelWithRetry(ctx, current, currentInput, retry)
+		lastOutput, lastErr = generateModelWithRetry(ctx, current, currentInput, retry, options...)
 		if lastErr == nil {
 			return lastOutput, nil
 		}

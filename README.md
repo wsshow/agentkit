@@ -420,7 +420,7 @@ The two history views have distinct responsibilities:
 - `ContextHistory()` returns the compacted context actually sent to the model.
 - With `Session` configured, both are persisted so a restart does not accidentally restore the full history into the model context.
 
-With no explicit limit, compaction starts above the estimated `DefaultCompactionMaxTokens` (100,000). Summary errors are returned normally and never replace the original context. Subscribe to `EventCompactionStart` and `EventCompactionEnd` to show progress.
+With no explicit limit, compaction starts above the estimated `DefaultCompactionMaxTokens` (100,000). The summary model automatically reuses the Agent's `ModelRetryConfig` and `ModelFailoverConfig`, including when `Compaction.Model` selects a dedicated model. Summary errors that remain after those policies are exhausted are returned normally and never replace the original context. Subscribe to `EventCompactionStart` and `EventCompactionEnd` to show progress.
 
 ### Skills
 

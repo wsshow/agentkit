@@ -17,20 +17,21 @@ func generateModelWithRetry(
 	chatModel ChatModel,
 	input []*schema.Message,
 	config *ModelRetryConfig,
+	options ...ModelOption,
 ) (*schema.Message, error) {
 	if config == nil {
-		return chatModel.Generate(ctx, input)
+		return chatModel.Generate(ctx, input, options...)
 	}
 	maxRetries := config.MaxRetries
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
 	if config.ShouldRetry == nil {
-		return generateModelWithLegacyRetry(ctx, chatModel, input, config, maxRetries)
+		return generateModelWithLegacyRetry(ctx, chatModel, input, config, maxRetries, options...)
 	}
 
 	currentInput := input
-	var currentOptions []ModelOption
+	currentOptions := append([]ModelOption(nil), options...)
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		output, err := chatModel.Generate(ctx, currentInput, currentOptions...)
@@ -82,6 +83,7 @@ func generateModelWithLegacyRetry(
 	input []*schema.Message,
 	config *ModelRetryConfig,
 	maxRetries int,
+	options ...ModelOption,
 ) (*schema.Message, error) {
 	//lint:ignore SA1019 ModelRetryConfig still supports IsRetryAble for Eino compatibility.
 	shouldRetry := config.IsRetryAble
@@ -90,7 +92,7 @@ func generateModelWithLegacyRetry(
 	}
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		output, err := chatModel.Generate(ctx, input)
+		output, err := chatModel.Generate(ctx, input, options...)
 		if err == nil {
 			return output, nil
 		}

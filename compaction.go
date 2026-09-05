@@ -34,6 +34,20 @@ type CompactionInfo struct {
 	MessagesAfter  int
 }
 
+type resilientCompactionModel struct {
+	model    ChatModel
+	retry    *ModelRetryConfig
+	failover *ModelFailoverConfig
+}
+
+func (m *resilientCompactionModel) Generate(ctx context.Context, input []*schema.Message, options ...ModelOption) (*schema.Message, error) {
+	return generateModelWithFailover(ctx, m.model, input, m.retry, m.failover, options...)
+}
+
+func (m *resilientCompactionModel) Stream(ctx context.Context, input []*schema.Message, options ...ModelOption) (*schema.StreamReader[*schema.Message], error) {
+	return m.model.Stream(ctx, input, options...)
+}
+
 func validateCompactionConfig(cfg *CompactionConfig) error {
 	if cfg == nil {
 		return nil
@@ -54,6 +68,11 @@ func newCompactionMiddleware(ctx context.Context, agent *Agent, primaryModel Cha
 	model := cfg.Model
 	if model == nil {
 		model = primaryModel
+	}
+	model = &resilientCompactionModel{
+		model:    model,
+		retry:    agent.modelRetry,
+		failover: agent.modelFailover,
 	}
 	maxTokens := cfg.MaxTokens
 	if maxTokens == 0 {

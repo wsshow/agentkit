@@ -420,7 +420,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 - `ContextHistory()` 返回实际发送给模型的压缩上下文。
 - 配置了 `Session` 时两者会一起持久化，重启后不会重新塞回完整历史。
 
-如果不设置任何阈值，默认在估算超过 `DefaultCompactionMaxTokens`（100,000）时触发。摘要失败会作为正常错误返回，原上下文不会被覆盖。可订阅 `EventCompactionStart` 和 `EventCompactionEnd` 展示压缩进度。
+如果不设置任何阈值，默认在估算超过 `DefaultCompactionMaxTokens`（100,000）时触发。摘要模型会自动复用 Agent 的 `ModelRetryConfig` 和 `ModelFailoverConfig`，即使通过 `Compaction.Model` 使用独立模型也无需重复配置。耗尽这些策略后仍然失败时，错误会正常返回且原上下文不会被覆盖。可订阅 `EventCompactionStart` 和 `EventCompactionEnd` 展示压缩进度。
 
 ### 技能管理
 

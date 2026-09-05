@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -202,6 +203,111 @@ func TestAgentCompactionFailureKeepsOriginalContext(t *testing.T) {
 	}
 	if got := events.Count(EventCompactionEnd); got != 0 {
 		t.Fatalf("compaction end count = %d, want 0", got)
+	}
+}
+
+func TestAgentCompactionReusesModelRetry(t *testing.T) {
+	ctx := context.Background()
+	transient := errors.New("temporary summary failure")
+	summaryModel := NewMockChatModel(
+		MockModelError(transient),
+		MockModelText("summary after retry"),
+	)
+	primaryModel := NewMockChatModel(MockExpect(MockModelText("latest answer"), func(call MockModelCall) error {
+		if !containsSubstring(nonSystemContents(call.Input), "summary after retry") {
+			return fmt.Errorf("primary input does not contain retried summary: %v", nonSystemContents(call.Input))
+		}
+		return nil
+	}))
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: primaryModel,
+		History: []*schema.Message{
+			schema.UserMessage("question one"),
+			schema.AssistantMessage("answer one", nil),
+			schema.UserMessage("question two"),
+			schema.AssistantMessage("answer two", nil),
+		},
+		ModelRetryConfig: &ModelRetryConfig{
+			MaxRetries:  1,
+			BackoffFunc: func(context.Context, int) time.Duration { return 0 },
+		},
+		Compaction: &CompactionConfig{
+			Model:       summaryModel,
+			MaxMessages: 4,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+
+	if err := agent.Prompt(ctx, "latest question"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+	if got := len(summaryModel.Calls()); got != 2 {
+		t.Fatalf("summary model calls = %d, want 2", got)
+	}
+}
+
+func TestAgentCompactionRetriesBeforeModelFailover(t *testing.T) {
+	ctx := context.Background()
+	primaryErr := errors.New("summary model unavailable")
+	summaryModel := NewMockChatModel(
+		MockModelError(primaryErr),
+		MockModelError(primaryErr),
+	)
+	backupModel := NewMockChatModel(MockModelText("summary from backup"))
+	primaryModel := NewMockChatModel(MockExpect(MockModelText("latest answer"), func(call MockModelCall) error {
+		if !containsSubstring(nonSystemContents(call.Input), "summary from backup") {
+			return fmt.Errorf("primary input does not contain backup summary: %v", nonSystemContents(call.Input))
+		}
+		return nil
+	}))
+	var failoverCalls int
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: primaryModel,
+		History: []*schema.Message{
+			schema.UserMessage("question one"),
+			schema.AssistantMessage("answer one", nil),
+			schema.UserMessage("question two"),
+			schema.AssistantMessage("answer two", nil),
+		},
+		ModelRetryConfig: &ModelRetryConfig{
+			MaxRetries:  1,
+			BackoffFunc: func(context.Context, int) time.Duration { return 0 },
+		},
+		ModelFailoverConfig: &ModelFailoverConfig{
+			MaxRetries: 1,
+			ShouldFailover: func(_ context.Context, _ *schema.Message, err error) bool {
+				var exhausted *adk.RetryExhaustedError
+				return errors.As(err, &exhausted) && errors.Is(exhausted.LastErr, primaryErr)
+			},
+			GetFailoverModel: func(_ context.Context, failover *adk.FailoverContext[*schema.Message]) (ChatModel, []*schema.Message, error) {
+				failoverCalls++
+				if failover.FailoverAttempt != 1 {
+					t.Fatalf("failover attempt = %d, want 1", failover.FailoverAttempt)
+				}
+				return backupModel, nil, nil
+			},
+		},
+		Compaction: &CompactionConfig{
+			Model:       summaryModel,
+			MaxMessages: 4,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+
+	if err := agent.Prompt(ctx, "latest question"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+	if len(summaryModel.Calls()) != 2 || len(backupModel.Calls()) != 1 || failoverCalls != 1 {
+		t.Fatalf("summary calls = primary %d, backup %d, failover %d; want 2, 1, 1",
+			len(summaryModel.Calls()), len(backupModel.Calls()), failoverCalls)
 	}
 }
 
