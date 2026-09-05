@@ -285,14 +285,14 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 	allTools := append(append([]Tool(nil), tools...), dynamicTools(cfg.ToolSearch)...)
 	if err := validateCombinedToolNames(ctx, allTools, cfg.Skills); err != nil {
-		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
+		return nil, errors.Join(err, closeMCPConnectionsAfterInitialization(ctx, cfg.MCP, mcpConnections))
 	}
 	if err := validateReservedToolNames(ctx, allTools, cfg.ToolSearch, cfg.ToolPolicy); err != nil {
-		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
+		return nil, errors.Join(err, closeMCPConnectionsAfterInitialization(ctx, cfg.MCP, mcpConnections))
 	}
 	knownToolNames, err := validateToolPolicy(ctx, allTools, cfg.Skills, cfg.ToolPolicy)
 	if err != nil {
-		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
+		return nil, errors.Join(err, closeMCPConnectionsAfterInitialization(ctx, cfg.MCP, mcpConnections))
 	}
 	if cfg.ToolSearch != nil {
 		knownToolNames[toolSearchToolName] = struct{}{}
@@ -319,7 +319,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 
 	adkAgent, err := adk.NewChatModelAgent(ctx, agentCfg)
 	if err != nil {
-		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
+		return nil, errors.Join(err, closeMCPConnectionsAfterInitialization(ctx, cfg.MCP, mcpConnections))
 	}
 
 	store := cfg.CheckPointStore

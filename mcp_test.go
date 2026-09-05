@@ -145,6 +145,40 @@ func TestConnectMCPBoundsToolDiscovery(t *testing.T) {
 	}
 }
 
+func TestConnectMCPBoundsCleanupAfterFailure(t *testing.T) {
+	blocking := &blockingMCPClientSession{
+		fakeMCPClientSession: newFakeMCPClientSession("first"),
+		started:              make(chan struct{}),
+		release:              make(chan struct{}),
+	}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(blocking.release) }) }
+	t.Cleanup(release)
+	failing := newFakeMCPClientSession("second")
+	failing.listErr = errors.New("list failed")
+	cfg := &MCPConfig{
+		InitializationTimeout: 20 * time.Millisecond,
+		Servers: []MCPServerConfig{
+			{Name: "first", Session: blocking},
+			{Name: "second", Session: failing},
+		},
+	}
+	started := time.Now()
+	_, _, err := connectMCP(context.Background(), cfg)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "list failed") {
+		t.Fatalf("connectMCP() error = %v, want list failure and cleanup deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("connectMCP() took %s, want bounded cleanup", elapsed)
+	}
+	select {
+	case <-blocking.started:
+	default:
+		t.Fatal("blocking cleanup did not start")
+	}
+	release()
+}
+
 func TestConnectMCPTruncatesLargeToolResults(t *testing.T) {
 	session := newFakeMCPClientSession("large")
 	session.result = &protocol.CallToolResult{

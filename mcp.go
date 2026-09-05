@@ -204,15 +204,12 @@ func connectMCP(ctx context.Context, cfg *MCPConfig) ([]Tool, []managedMCPConnec
 	}
 	maxResultChars := configuredMCPLimit(cfg.MaxResultChars, DefaultMCPMaxResultChars)
 	maxDescriptionChars := configuredMCPLimit(cfg.MaxDescriptionChars, DefaultMCPMaxDescriptionChars)
-	initializationTimeout := cfg.InitializationTimeout
-	if initializationTimeout == 0 {
-		initializationTimeout = DefaultMCPInitializationTimeout
-	}
+	initializationTimeout := mcpInitializationTimeout(cfg)
 
 	var tools []Tool
 	connections := make([]managedMCPConnection, 0, len(cfg.Servers))
 	fail := func(err error) ([]Tool, []managedMCPConnection, error) {
-		return nil, nil, errors.Join(err, closeMCPConnections(connections))
+		return nil, nil, errors.Join(err, closeMCPConnectionsAfterInitialization(ctx, cfg, connections))
 	}
 
 	for _, server := range cfg.Servers {
@@ -340,6 +337,13 @@ func preserveTailChars(maxChars int) int {
 	return tail
 }
 
+func mcpInitializationTimeout(cfg *MCPConfig) time.Duration {
+	if cfg != nil && cfg.InitializationTimeout > 0 {
+		return cfg.InitializationTimeout
+	}
+	return DefaultMCPInitializationTimeout
+}
+
 func cloneStringMap(source map[string]string) map[string]string {
 	if source == nil {
 		return nil
@@ -391,4 +395,25 @@ func closeMCPConnections(connections []managedMCPConnection) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func closeMCPConnectionsAfterInitialization(ctx context.Context, cfg *MCPConfig, connections []managedMCPConnection) error {
+	if len(connections) == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mcpInitializationTimeout(cfg))
+	defer cancel()
+	closed := make(chan error, 1)
+	go func() {
+		closed <- closeMCPConnections(connections)
+	}()
+	select {
+	case err := <-closed:
+		return err
+	case <-cleanupCtx.Done():
+		return fmt.Errorf("agentkit: close MCP connections after initialization: %w", cleanupCtx.Err())
+	}
 }
