@@ -376,6 +376,15 @@ Every successfully committed state change emits `EventGoalUpdate` through `Agent
 
 Goal state is committed before work, after Agent output, and after evaluation. If saved session history proves that a step finished, `Resume` evaluates it without repeating the work. If the process could have exited after an external side effect but before session progress was saved, the goal becomes `blocked` with `ErrGoalRecoveryRequired`; only the explicit `Retry` method may replay that uncertain step. This favors safety over pretending to provide exactly-once external effects.
 
+Tools that perform external side effects can cheaply participate in durable deduplication:
+
+```go
+key, ok := agentkit.GoalOperationKey(ctx, "publish-release")
+// Pass key to an idempotent API, or atomically store it with the operation result.
+```
+
+The key is stable for the same goal attempt across process recovery and explicit `Retry`, while the next successful goal iteration receives a different key. `CurrentGoalRun` exposes the corresponding `GoalID`, `SessionID`, and `Attempt` when richer audit metadata is needed. The external system must still enforce uniqueness; AgentKit does not claim universal exactly-once execution.
+
 Internal session, checkpoint, and goal cleanup after cancellation uses a bounded context. `Config.PersistenceTimeout` defaults to `DefaultPersistenceTimeout` (30 seconds), so a broken custom store cannot prevent a run from exiting forever; raise it only when the persistence backend legitimately needs more time.
 
 If work and the following recovery-state save both fail, GoalRunner returns them together with `errors.Join`; callers can detect both causes with `errors.Is`. It never reports only the model/tool error while silently hiding that durable recovery state may be stale.

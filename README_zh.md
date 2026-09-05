@@ -376,6 +376,15 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 
 目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
 
+执行外部副作用的工具可以用极低成本参与持久化去重：
+
+```go
+key, ok := agentkit.GoalOperationKey(ctx, "publish-release")
+// 将 key 传给支持幂等的 API，或与操作结果一起原子保存。
+```
+
+同一目标尝试跨进程恢复或显式 `Retry` 时会得到相同 key；成功进入下一次目标迭代后则会得到新 key。需要更完整审计信息时，`CurrentGoalRun` 会返回对应的 `GoalID`、`SessionID` 和 `Attempt`。唯一性仍须由外部系统保证，AgentKit 不会宣称通用 exactly-once。
+
 请求取消后的 Session、Checkpoint 和 Goal 内部收尾会使用有界 context。`Config.PersistenceTimeout` 默认为 `DefaultPersistenceTimeout`（30 秒），异常自定义存储不会再让任务永久无法退出；只有后端确实需要更久时才应调大。
 
 如果工作本身和随后的恢复状态落盘同时失败，GoalRunner 会用 `errors.Join` 一起返回，调用方可分别通过 `errors.Is` 判断。框架不会只报告模型/工具错误，却静默隐藏持久化恢复点可能已经陈旧。

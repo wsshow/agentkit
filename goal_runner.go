@@ -366,7 +366,7 @@ func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map
 	if err := r.save(runCtx, goal); err != nil {
 		return nil, err
 	}
-	result, runErr := r.agent.ResumeWithResult(runCtx, targets)
+	result, runErr := r.agent.ResumeWithResult(withGoalRunContext(runCtx, goal), targets)
 	if runErr != nil {
 		persistErr := r.recordRunError(runCtx, goal, runErr)
 		return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, errors.Join(runErr, persistErr)
@@ -648,7 +648,7 @@ func (r *GoalRunner) drive(ctx context.Context, goal *Goal, lastRun *RunResult) 
 		if err := r.save(ctx, goal); err != nil {
 			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, err
 		}
-		result, runErr := r.agent.Ask(ctx, prompt)
+		result, runErr := r.agent.Ask(withGoalRunContext(ctx, goal), prompt)
 		if runErr != nil {
 			persistErr := r.recordRunError(ctx, goal, runErr)
 			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, errors.Join(runErr, persistErr)
@@ -737,7 +737,7 @@ func (r *GoalRunner) recoverAttempt(ctx context.Context, goal *Goal) (*RunResult
 		return result, nil
 	}
 	if last != nil && (last.Role == schema.User || last.Role == schema.Tool) {
-		result, err := r.agent.ContinueWithResult(ctx)
+		result, err := r.agent.ContinueWithResult(withGoalRunContext(ctx, goal))
 		if err != nil {
 			persistErr := r.recordRunError(ctx, goal, err)
 			return result, errors.Join(err, persistErr)
