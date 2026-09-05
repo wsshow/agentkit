@@ -357,6 +357,8 @@ Goal state is committed before work, after Agent output, and after evaluation. I
 
 Internal session, checkpoint, and goal cleanup after cancellation uses a bounded context. `Config.PersistenceTimeout` defaults to `DefaultPersistenceTimeout` (30 seconds), so a broken custom store cannot prevent a run from exiting forever; raise it only when the persistence backend legitimately needs more time.
 
+If work and the following recovery-state save both fail, GoalRunner returns them together with `errors.Join`; callers can detect both causes with `errors.Is`. It never reports only the model/tool error while silently hiding that durable recovery state may be stale.
+
 The default model-based evaluator reuses the Agent's `ModelRetryConfig` and `ModelFailoverConfig`, including custom retry decisions, backoff, and alternate model selection. It exhausts retries on the current model before failing over, matching normal Agent calls. Transient evaluation failures therefore receive the same protection without another configuration block. A custom `GoalEvaluator` remains fully under application control.
 
 The built-in goal stores also implement the optional `GoalLeaseStore` interface. `GoalRunner` discovers it automatically, acquires ownership for every state-changing operation, renews the lease in the background during long model/tool calls, and fences every save with an opaque token. A concurrent worker receives `ErrGoalLeaseHeld`; `errors.As` can extract `GoalLeaseHeldError` for its owner and expiration. A worker that loses ownership is canceled and receives `ErrGoalLeaseLost`. After a crashed worker's lease expires, a replacement can call `Resume` and use the existing safe recovery rules.

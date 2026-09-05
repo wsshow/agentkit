@@ -325,7 +325,7 @@ func (r *GoalRunner) Resume(ctx context.Context, id string) (out *GoalRunResult,
 		goal.Status = GoalStatusPaused
 		goal.LastReason = "waiting for human input"
 		if err := r.saveDetached(runCtx, goal); err != nil {
-			return &GoalRunResult{Goal: goal}, err
+			return &GoalRunResult{Goal: goal}, errors.Join(ErrGoalInterruptRequired, err)
 		}
 		return &GoalRunResult{Goal: cloneGoal(goal)}, ErrGoalInterruptRequired
 	}
@@ -368,8 +368,8 @@ func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map
 	}
 	result, runErr := r.agent.ResumeWithResult(runCtx, targets)
 	if runErr != nil {
-		r.recordRunError(runCtx, goal, runErr)
-		return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, runErr
+		persistErr := r.recordRunError(runCtx, goal, runErr)
+		return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, errors.Join(runErr, persistErr)
 	}
 	if err := r.finishAttempt(runCtx, goal, result); err != nil {
 		return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, err
@@ -588,13 +588,13 @@ func (r *GoalRunner) drive(ctx context.Context, goal *Goal, lastRun *RunResult) 
 		}
 		if goal.AwaitingInterrupt {
 			goal.Status = GoalStatusPaused
-			_ = r.saveDetached(ctx, goal)
-			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, ErrGoalInterruptRequired
+			persistErr := r.saveDetached(ctx, goal)
+			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, errors.Join(ErrGoalInterruptRequired, persistErr)
 		}
 		if goal.PendingEvaluation {
 			if err := r.evaluate(ctx, goal); err != nil {
-				r.recordRunError(ctx, goal, err)
-				return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, err
+				persistErr := r.recordRunError(ctx, goal, err)
+				return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, errors.Join(err, persistErr)
 			}
 			continue
 		}
@@ -611,10 +611,11 @@ func (r *GoalRunner) drive(ctx context.Context, goal *Goal, lastRun *RunResult) 
 		if goal.Iteration >= goal.MaxIterations {
 			goal.Status = GoalStatusBlocked
 			goal.LastReason = fmt.Sprintf("maximum goal iterations reached: %d", goal.MaxIterations)
+			blockedErr := fmt.Errorf("%w: %s", ErrGoalBlocked, goal.LastReason)
 			if err := r.saveDetached(ctx, goal); err != nil {
-				return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, err
+				return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, errors.Join(blockedErr, err)
 			}
-			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, fmt.Errorf("%w: %s", ErrGoalBlocked, goal.LastReason)
+			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, blockedErr
 		}
 
 		prompt := goalPrompt(goal)
@@ -628,8 +629,8 @@ func (r *GoalRunner) drive(ctx context.Context, goal *Goal, lastRun *RunResult) 
 		}
 		result, runErr := r.agent.Ask(ctx, prompt)
 		if runErr != nil {
-			r.recordRunError(ctx, goal, runErr)
-			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, runErr
+			persistErr := r.recordRunError(ctx, goal, runErr)
+			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, errors.Join(runErr, persistErr)
 		}
 		lastRun = result
 		if err := r.finishAttempt(ctx, goal, result); err != nil {
@@ -717,8 +718,8 @@ func (r *GoalRunner) recoverAttempt(ctx context.Context, goal *Goal) (*RunResult
 	if last != nil && (last.Role == schema.User || last.Role == schema.Tool) {
 		result, err := r.agent.ContinueWithResult(ctx)
 		if err != nil {
-			r.recordRunError(ctx, goal, err)
-			return result, err
+			persistErr := r.recordRunError(ctx, goal, err)
+			return result, errors.Join(err, persistErr)
 		}
 		if err := r.finishAttempt(ctx, goal, result); err != nil {
 			return result, err
@@ -734,21 +735,23 @@ func (r *GoalRunner) blockRecovery(ctx context.Context, goal *Goal, reason strin
 	goal.Status = GoalStatusBlocked
 	goal.LastReason = reason
 	goal.LastError = ErrGoalRecoveryRequired.Error()
+	recoveryErr := fmt.Errorf("%w: %s", ErrGoalRecoveryRequired, reason)
 	if err := r.save(persistCtx, goal); err != nil {
-		return err
+		return errors.Join(recoveryErr, err)
 	}
-	return fmt.Errorf("%w: %s", ErrGoalRecoveryRequired, reason)
+	return recoveryErr
 }
 
-func (r *GoalRunner) recordRunError(ctx context.Context, goal *Goal, runErr error) {
+func (r *GoalRunner) recordRunError(ctx context.Context, goal *Goal, runErr error) error {
 	persistCtx, cancel := r.persistenceContext(ctx)
 	defer cancel()
-	latest, err := r.loadForAgent(persistCtx, goal.ID)
-	if err == nil {
+	latest, loadErr := r.loadForAgent(persistCtx, goal.ID)
+	if loadErr == nil {
 		*goal = *latest
 	}
 	goal.LastError = runErr.Error()
-	_ = r.save(persistCtx, goal)
+	saveErr := r.save(persistCtx, goal)
+	return errors.Join(loadErr, saveErr)
 }
 
 func (r *GoalRunner) loadForAgentDetached(ctx context.Context, id string) (*Goal, error) {

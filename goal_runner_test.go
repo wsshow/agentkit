@@ -167,6 +167,40 @@ func TestGoalRunnerResumesPendingEvaluationAcrossAgentInstances(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerReportsRunAndErrorPersistenceFailures(t *testing.T) {
+	ctx := context.Background()
+	runErr := errors.New("model unavailable")
+	persistErr := errors.New("goal database unavailable")
+	store := &failNthGoalSaveStore{
+		inner:  NewMemoryGoalStore(),
+		failAt: 3,
+		err:    persistErr,
+	}
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: NewMockChatModel(MockModelError(runErr)),
+		Session: &SessionConfig{ID: "joined-error-session", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{Store: store})
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+
+	result, err := runner.Start(ctx, GoalRequest{ID: "joined-error", Objective: "finish"})
+	if !errors.Is(err, runErr) || !errors.Is(err, persistErr) {
+		t.Fatalf("Start() error = %v, want run and persistence errors", err)
+	}
+	if result == nil || result.Goal == nil {
+		t.Fatalf("Start() result = %#v, want attempted error snapshot", result)
+	}
+	if !strings.Contains(result.Goal.LastError, runErr.Error()) {
+		t.Fatalf("Start() goal = %#v, want attempted error snapshot", result.Goal)
+	}
+}
+
 func TestGoalRunnerGeneratesIDAndResumesOnlyPendingGoal(t *testing.T) {
 	ctx := context.Background()
 	sessions := NewMemorySessionStore()
@@ -606,4 +640,31 @@ func TestNewGoalRunnerRequiresSession(t *testing.T) {
 	if _, err := NewGoalRunner(agent, nil); !errors.Is(err, ErrSessionDisabled) {
 		t.Fatalf("expected ErrSessionDisabled, got %v", err)
 	}
+}
+
+type failNthGoalSaveStore struct {
+	inner  GoalStore
+	failAt int
+	err    error
+	saves  int
+}
+
+func (s *failNthGoalSaveStore) Load(ctx context.Context, id string) (*Goal, error) {
+	return s.inner.Load(ctx, id)
+}
+
+func (s *failNthGoalSaveStore) Save(ctx context.Context, goal *Goal) error {
+	s.saves++
+	if s.saves == s.failAt {
+		return s.err
+	}
+	return s.inner.Save(ctx, goal)
+}
+
+func (s *failNthGoalSaveStore) Delete(ctx context.Context, id string) error {
+	return s.inner.Delete(ctx, id)
+}
+
+func (s *failNthGoalSaveStore) List(ctx context.Context) ([]GoalInfo, error) {
+	return s.inner.List(ctx)
 }
