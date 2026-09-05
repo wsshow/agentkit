@@ -134,6 +134,10 @@ func TestGoalRunnerRenewsLeaseAndRejectsConcurrentWorker(t *testing.T) {
 		close(unblock)
 		t.Fatalf("expected ErrGoalLeaseHeld, got %v", err)
 	}
+	if err := secondRunner.Pause(context.Background(), "shared-goal"); !errors.Is(err, ErrGoalLeaseHeld) {
+		close(unblock)
+		t.Fatalf("expected leased goal pause to fail with ErrGoalLeaseHeld, got %v", err)
+	}
 	if err := secondRunner.Clear(context.Background(), "shared-goal"); !errors.Is(err, ErrGoalLeaseHeld) {
 		close(unblock)
 		t.Fatalf("expected leased goal clear to fail with ErrGoalLeaseHeld, got %v", err)
@@ -156,6 +160,61 @@ func TestGoalRunnerRenewsLeaseAndRejectsConcurrentWorker(t *testing.T) {
 	}
 	if _, err := store.Load(context.Background(), "shared-goal"); !errors.Is(err, ErrGoalNotFound) {
 		t.Fatalf("expected cleared goal to be missing, got %v", err)
+	}
+}
+
+func TestGoalRunnerPausesItsActiveLeasedGoal(t *testing.T) {
+	ctx := context.Background()
+	sessions := NewMemorySessionStore()
+	store := NewMemoryGoalStore()
+	started := make(chan struct{})
+	var startOnce sync.Once
+	blockingTool := MustMockTool("pausable_work", "wait for pause", func(ctx context.Context, _ string) (string, error) {
+		startOnce.Do(func() { close(started) })
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: NewMockChatModel(
+			MockModelToolCallWithID("pausable-call", "pausable_work", `""`),
+		),
+		Tools:   MockTools(blockingTool),
+		Session: &SessionConfig{ID: "pausable-session", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Store: store, WorkerID: "worker", LeaseDuration: time.Second, RequireLease: true,
+	})
+	if err != nil {
+		t.Fatalf("create goal runner: %v", err)
+	}
+
+	finished := make(chan error, 1)
+	go func() {
+		_, runErr := runner.Start(context.Background(), GoalRequest{ID: "pausable-goal", Objective: "wait"})
+		finished <- runErr
+	}()
+	waitForTestSignal(t, started, "pausable tool start")
+	if err := runner.Pause(ctx, "pausable-goal"); err != nil {
+		t.Fatalf("pause active goal: %v", err)
+	}
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("paused run error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("paused goal did not stop")
+	}
+	goal, err := store.Load(ctx, "pausable-goal")
+	if err != nil {
+		t.Fatalf("load paused goal: %v", err)
+	}
+	if goal.Status != GoalStatusPaused {
+		t.Fatalf("paused goal status = %q, want %q", goal.Status, GoalStatusPaused)
 	}
 }
 

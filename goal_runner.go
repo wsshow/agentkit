@@ -432,7 +432,28 @@ func (r *GoalRunner) ResumePending(ctx context.Context) (*GoalRunResult, error) 
 }
 
 // Pause 持久化暂停状态，并取消由当前 GoalRunner 发起的同一目标执行。
-func (r *GoalRunner) Pause(ctx context.Context, id string) error {
+func (r *GoalRunner) Pause(ctx context.Context, id string) (retErr error) {
+	if err := validateGoalContextAndID(ctx, id); err != nil {
+		return err
+	}
+	var lease *GoalLease
+	if r.leaseStore != nil {
+		r.activeMu.Lock()
+		if r.activeID == id {
+			lease = cloneGoalLease(r.lease)
+		}
+		r.activeMu.Unlock()
+		if lease == nil {
+			var err error
+			lease, err = r.leaseStore.AcquireGoalLease(ctx, id, r.workerID, r.leaseDuration)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				retErr = errors.Join(retErr, r.releaseLease(context.WithoutCancel(ctx), lease))
+			}()
+		}
+	}
 	var saved bool
 	for range 3 {
 		goal, err := r.loadForAgent(ctx, id)
@@ -444,7 +465,7 @@ func (r *GoalRunner) Pause(ctx context.Context, id string) error {
 		}
 		goal.Status = GoalStatusPaused
 		goal.LastReason = "paused by caller"
-		err = r.save(ctx, goal)
+		err = r.saveWithLease(ctx, goal, lease)
 		if err == nil {
 			saved = true
 			break
@@ -785,14 +806,18 @@ func (r *GoalRunner) loadForAgent(ctx context.Context, id string) (*Goal, error)
 }
 
 func (r *GoalRunner) save(ctx context.Context, goal *Goal) error {
+	r.activeMu.Lock()
+	lease := cloneGoalLease(r.lease)
+	r.activeMu.Unlock()
+	return r.saveWithLease(ctx, goal, lease)
+}
+
+func (r *GoalRunner) saveWithLease(ctx context.Context, goal *Goal, lease *GoalLease) error {
 	now := time.Now().UTC()
 	if goal.CreatedAt.IsZero() {
 		goal.CreatedAt = now
 	}
 	goal.UpdatedAt = now
-	r.activeMu.Lock()
-	lease := cloneGoalLease(r.lease)
-	r.activeMu.Unlock()
 	var err error
 	if r.leaseStore != nil && lease != nil && lease.GoalID == goal.ID {
 		err = r.leaseStore.SaveGoalWithLease(ctx, goal, lease)
