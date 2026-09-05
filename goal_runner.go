@@ -752,14 +752,26 @@ func (r *GoalRunner) loadForAgent(ctx context.Context, id string) (*Goal, error)
 }
 
 func (r *GoalRunner) save(ctx context.Context, goal *Goal) error {
-	goal.UpdatedAt = time.Now().UTC()
+	now := time.Now().UTC()
+	if goal.CreatedAt.IsZero() {
+		goal.CreatedAt = now
+	}
+	goal.UpdatedAt = now
 	r.activeMu.Lock()
 	lease := cloneGoalLease(r.lease)
 	r.activeMu.Unlock()
+	var err error
 	if r.leaseStore != nil && lease != nil && lease.GoalID == goal.ID {
-		return r.leaseStore.SaveGoalWithLease(ctx, goal, lease)
+		err = r.leaseStore.SaveGoalWithLease(ctx, goal, lease)
+	} else {
+		err = r.store.Save(ctx, goal)
 	}
-	return r.store.Save(ctx, goal)
+	if err != nil {
+		return err
+	}
+	goal.Revision++
+	r.agent.emtr.Emit(Event{Type: EventGoalUpdate, Agent: r.agent.Name(), Goal: goal})
+	return nil
 }
 
 func goalPrompt(goal *Goal) string {

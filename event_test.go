@@ -41,6 +41,7 @@ func TestEmitterIsolatesMutableEventFields(t *testing.T) {
 		ResponseMeta: &ResponseMeta{Usage: &TokenUsage{TotalTokens: 42}},
 		Interrupt:    []InterruptPoint{{ID: "interrupt-1"}},
 		Compaction:   &CompactionInfo{MessagesBefore: 10, MessagesAfter: 4},
+		Goal:         &Goal{ID: "goal-1", Objective: "original"},
 	}
 
 	emitter.Subscribe(func(event Event) {
@@ -49,6 +50,7 @@ func TestEmitterIsolatesMutableEventFields(t *testing.T) {
 		event.ResponseMeta.Usage.TotalTokens = 99
 		event.Interrupt[0].ID = "mutated"
 		event.Compaction.MessagesAfter = 99
+		event.Goal.Objective = "mutated"
 	})
 	emitter.Subscribe(func(event Event) {
 		assertOriginalEvent(t, event)
@@ -81,5 +83,8 @@ func assertOriginalEvent(t *testing.T, event Event) {
 	}
 	if got := event.Compaction.MessagesAfter; got != 4 {
 		t.Fatalf("messages after compaction = %d, want 4", got)
+	}
+	if got := event.Goal.Objective; got != "original" {
+		t.Fatalf("goal objective = %q, want original", got)
 	}
 }

@@ -117,6 +117,7 @@ The stream reserves the Agent before returning, supports `Cancel`, `Done`, `Wait
 | `EventInterrupted`    | HITL interrupt (`Event.Interrupt`)                                                 |
 | `EventCompactionStart` | Automatic context compaction started (`Event.Compaction.MessagesBefore`)          |
 | `EventCompactionEnd`  | Automatic context compaction completed (`Event.Compaction`)                       |
+| `EventGoalUpdate`     | Durable goal state committed (`Event.Goal`)                                        |
 | `EventAgentEnd`       | Agent processing complete                                                          |
 | `EventError`          | Error occurred (`Event.Error`)                                                     |
 
@@ -137,6 +138,7 @@ type Event struct {
     ToolArguments    string           // tool arguments (tool_update / tool_end)
     Interrupt        []InterruptPoint // interrupt points (interrupted)
     Compaction       *CompactionInfo  // context message counts before/after compaction
+    Goal             *Goal            // persisted goal snapshot (goal_update)
     Error            error            // error details (error)
 }
 ```
@@ -347,6 +349,8 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 ```
 
 Recreate the file store and Agent with the same session ID after a process restart, then call `goals.Resume(ctx, "release-v2")`. If the ID was generated automatically, `goals.ResumePending(ctx)` resumes the current session's only unfinished goal; it returns `ErrGoalResumeAmbiguous` instead of guessing when multiple goals exist. `goals.List(ctx)` returns only goals belonging to the current session. The built-in session stores automatically supply their matching `GoalStore`; a custom evaluator or store can be set through `GoalRunnerConfig`. Use `Get`, `Pause`, and `Clear` for control. When a goal reaches HITL, submit the pending IDs with `ResumeInterrupt`.
+
+Every successfully committed state change emits `EventGoalUpdate` through `Agent.Subscribe`. Its `Event.Goal` is an isolated snapshot with the same revision as durable storage, so applications can update live status without polling and use `Get` after reconnecting.
 
 Goal state is committed before work, after Agent output, and after evaluation. If saved session history proves that a step finished, `Resume` evaluates it without repeating the work. If the process could have exited after an external side effect but before session progress was saved, the goal becomes `blocked` with `ErrGoalRecoveryRequired`; only the explicit `Retry` method may replay that uncertain step. This favors safety over pretending to provide exactly-once external effects.
 

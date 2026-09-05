@@ -56,6 +56,61 @@ func TestGoalRunnerCompletesAfterMultipleIterations(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerEmitsPersistedGoalUpdates(t *testing.T) {
+	ctx := context.Background()
+	sessions := NewMemorySessionStore()
+	model := NewMockChatModel(
+		MockModelText("done"),
+		MockModelText(`{"complete":true,"reason":"verified","next_prompt":""}`),
+	)
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: model,
+		Session: &SessionConfig{ID: "event-session", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	var updates []*Goal
+	agent.Subscribe(func(event Event) {
+		if event.Type == EventGoalUpdate {
+			updates = append(updates, event.Goal)
+		}
+	})
+	runner, err := NewGoalRunner(agent, nil)
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+
+	result, err := runner.Start(ctx, GoalRequest{ID: "observed", Objective: "finish"})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if len(updates) != 4 {
+		t.Fatalf("goal updates = %d, want 4", len(updates))
+	}
+	for index, update := range updates {
+		wantRevision := uint64(index + 1)
+		if update == nil || update.Revision != wantRevision {
+			t.Fatalf("goal update %d = %#v, want revision %d", index, update, wantRevision)
+		}
+		if update.CreatedAt.IsZero() || update.UpdatedAt.Before(update.CreatedAt) {
+			t.Fatalf("goal update %d timestamps = %#v", index, update)
+		}
+	}
+	last := updates[len(updates)-1]
+	if last.Status != GoalStatusCompleted || result.Goal.Revision != last.Revision {
+		t.Fatalf("last goal update = %#v, result = %#v", last, result.Goal)
+	}
+	persisted, err := sessions.GoalStore().Load(ctx, "observed")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if persisted.Revision != last.Revision || persisted.Status != last.Status {
+		t.Fatalf("persisted goal = %#v, last update = %#v", persisted, last)
+	}
+}
+
 func TestGoalRunnerResumesPendingEvaluationAcrossAgentInstances(t *testing.T) {
 	ctx := context.Background()
 	sessions := NewMemorySessionStore()

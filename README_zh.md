@@ -117,6 +117,7 @@ result, err := stream.Wait()
 | `EventInterrupted`    | HITL 中断（`Event.Interrupt`）                                              |
 | `EventCompactionStart` | 自动上下文压缩开始（`Event.Compaction.MessagesBefore`）                    |
 | `EventCompactionEnd`  | 自动上下文压缩完成（`Event.Compaction`）                                    |
+| `EventGoalUpdate`     | Goal 状态已持久化（`Event.Goal`）                                           |
 | `EventAgentEnd`       | Agent 处理完成                                                              |
 | `EventError`          | 发生错误（`Event.Error`）                                                   |
 
@@ -137,6 +138,7 @@ type Event struct {
     ToolArguments    string           // 工具调用参数（tool_update / tool_end）
     Interrupt        []InterruptPoint // 中断点列表（interrupted）
     Compaction       *CompactionInfo  // 上下文压缩前后的消息数量
+    Goal             *Goal            // 已持久化的目标快照（goal_update）
     Error            error            // 错误信息（error）
 }
 ```
@@ -347,6 +349,8 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 ```
 
 进程重启后，使用相同目录、Agent 名称和会话 ID 重建文件存储与 Agent，再调用 `goals.Resume(ctx, "release-v2")`。若 ID 是自动生成的，`goals.ResumePending(ctx)` 会恢复当前会话唯一的未完成目标；存在多个目标时返回 `ErrGoalResumeAmbiguous`，不会擅自选择。`goals.List(ctx)` 只列出当前会话的目标。内置会话存储会自动提供配套的 `GoalStore`；自定义判断器或存储可通过 `GoalRunnerConfig` 设置。状态控制使用 `Get`、`Pause` 和 `Clear`；目标进入 HITL 后，通过 `ResumeInterrupt` 提交待处理的中断 ID。
+
+每次状态成功落盘后，都会通过 `Agent.Subscribe` 发出 `EventGoalUpdate`。其中的 `Event.Goal` 是与持久化版本一致、彼此隔离的快照，应用在线时无需轮询即可更新进度，断线重连后再用 `Get` 对齐最新状态。
 
 目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
 

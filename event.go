@@ -23,6 +23,7 @@ const (
 	EventInterrupted     EventType = "interrupted"      // HITL 中断（等待用户输入）
 	EventCompactionStart EventType = "compaction_start" // 上下文压缩开始
 	EventCompactionEnd   EventType = "compaction_end"   // 上下文压缩完成
+	EventGoalUpdate      EventType = "goal_update"      // Goal 状态已持久化
 	EventAgentEnd        EventType = "agent_end"        // Agent 处理完成
 	EventError           EventType = "error"            // 错误
 )
@@ -42,6 +43,7 @@ type Event struct {
 	ToolArguments    string           // 工具调用参数（tool_update / tool_end）
 	Interrupt        []InterruptPoint // 中断点列表（interrupted）
 	Compaction       *CompactionInfo  // 上下文压缩信息（compaction_start / compaction_end）
+	Goal             *Goal            // 已持久化的目标快照（goal_update）
 	Error            error            // 错误信息（error）
 }
 
@@ -112,6 +114,7 @@ func cloneEvent(event Event) Event {
 		compaction := *event.Compaction
 		out.Compaction = &compaction
 	}
+	out.Goal = cloneGoal(event.Goal)
 	return out
 }
 
