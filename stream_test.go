@@ -85,6 +85,45 @@ func TestStreamWaitDoesNotDependOnEventConsumption(t *testing.T) {
 	}
 }
 
+func TestRunStreamWaitContextDoesNotCancelRun(t *testing.T) {
+	ctx := context.Background()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	tool := MustMockTool("wait_for_release", "wait for release", func(context.Context, string) (string, error) {
+		close(started)
+		<-release
+		return "released", nil
+	})
+	agent, err := New(ctx, &Config{
+		Model: NewMockChatModel(
+			MockModelToolCallWithID("wait-call", "wait_for_release", `""`),
+			MockModelTextAfterToolResult("wait-call"),
+		),
+		Tools: MockTools(tool),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+	stream, err := agent.Stream(ctx, "wait")
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	<-started
+
+	waitCtx, cancelWait := context.WithTimeout(ctx, 20*time.Millisecond)
+	result, err := stream.WaitContext(waitCtx)
+	cancelWait()
+	if result != nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitContext() = %#v, %v, want nil, context.DeadlineExceeded", result, err)
+	}
+	close(release)
+	result, err = stream.Wait()
+	if err != nil || result == nil || result.Text != "released" {
+		t.Fatalf("Wait() after timeout = %#v, %v", result, err)
+	}
+}
+
 func TestRunStreamCloseCancelsOnlyItsRun(t *testing.T) {
 	ctx := context.Background()
 	toolStarted := make(chan struct{})

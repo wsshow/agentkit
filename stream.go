@@ -2,6 +2,7 @@ package agentkit
 
 import (
 	"context"
+	"errors"
 	"sync"
 )
 
@@ -39,10 +40,23 @@ func (s *RunStream) Done() <-chan struct{} {
 // Wait 等待请求完成并返回隔离的运行结果。
 // Wait 可安全地重复调用；它不负责消费 Events。
 func (s *RunStream) Wait() (*RunResult, error) {
+	return s.WaitContext(context.Background())
+}
+
+// WaitContext 等待请求完成或 ctx 结束；等待超时不会取消底层执行。
+// 可在超时后再次调用 Wait 或 WaitContext 获取最终结果。
+func (s *RunStream) WaitContext(ctx context.Context) (*RunResult, error) {
 	if s == nil {
 		return nil, nil
 	}
-	<-s.done
+	if ctx == nil {
+		return nil, errors.New("agentkit: context is required")
+	}
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return cloneRunResult(s.result), s.err

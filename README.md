@@ -203,6 +203,7 @@ fmt.Println(result.Text, result.Usage)
 stream, err := agent.Stream(ctx, "user message")
 for event := range stream.Events() { ... }
 result, err = stream.Wait()
+result, err = stream.WaitContext(waitCtx) // bounds waiting without canceling the run
 
 // Send multimodal input (text + images, audio, video, files)
 err := agent.Send(ctx,

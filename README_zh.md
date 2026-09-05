@@ -203,6 +203,7 @@ fmt.Println(result.Text, result.Usage)
 stream, err := agent.Stream(ctx, "用户消息")
 for event := range stream.Events() { ... }
 result, err = stream.Wait()
+result, err = stream.WaitContext(waitCtx) // 限制等待时间，但不取消底层运行
 
 // 发送多模态输入（文本 + 图片、音频、视频、文件）
 err := agent.Send(ctx,
