@@ -511,6 +511,64 @@ func TestGoalRunnerRecoversSavedAssistantResultWithoutRepeatingWork(t *testing.T
 	}
 }
 
+func TestGoalRunnerBlocksRecoveryWhenSessionDiverged(t *testing.T) {
+	ctx := context.Background()
+	sessions := NewMemorySessionStore()
+	if err := sessions.Save(ctx, &Session{
+		ID: "diverged-session",
+		Messages: []*schema.Message{
+			schema.UserMessage("unrelated conversation"),
+			schema.AssistantMessage("unrelated answer", nil),
+		},
+	}); err != nil {
+		t.Fatalf("save diverged session: %v", err)
+	}
+	if err := sessions.GoalStore().Save(ctx, &Goal{
+		ID: "diverged", SessionID: "diverged-session", Objective: "perform goal work",
+		Status: GoalStatusActive, MaxIterations: 3, InProgress: true,
+		AttemptIteration: 1, HistoryMessageCount: 0, PendingPrompt: "perform goal work",
+	}); err != nil {
+		t.Fatalf("save in-progress goal: %v", err)
+	}
+	model := NewMockChatModel()
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: model,
+		Session: &SessionConfig{ID: "diverged-session", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create restored agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	var evaluations atomic.Int32
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(context.Context, GoalEvaluation) (GoalDecision, error) {
+			evaluations.Add(1)
+			return GoalDecision{Complete: true, Reason: "must not evaluate unrelated work"}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create restored runner: %v", err)
+	}
+
+	result, err := runner.Resume(ctx, "diverged")
+	if !errors.Is(err, ErrGoalRecoveryRequired) {
+		t.Fatalf("Resume() error = %v, want ErrGoalRecoveryRequired", err)
+	}
+	if result == nil || result.Goal == nil || result.Goal.Status != GoalStatusBlocked || !result.Goal.InProgress {
+		t.Fatalf("Resume() result = %#v, want blocked in-progress goal", result)
+	}
+	if evaluations.Load() != 0 || len(model.Calls()) != 0 {
+		t.Fatalf("diverged recovery evaluated %d times and called model %d times", evaluations.Load(), len(model.Calls()))
+	}
+	saved, err := sessions.GoalStore().Load(ctx, "diverged")
+	if err != nil {
+		t.Fatalf("load blocked goal: %v", err)
+	}
+	if saved.LastReason != "agent session diverged from the recorded goal attempt" || saved.LastError != ErrGoalRecoveryRequired.Error() {
+		t.Fatalf("saved blocked goal = %#v", saved)
+	}
+}
+
 func TestGoalRunnerContinuesAfterSavedToolResultWithoutRepeatingTool(t *testing.T) {
 	ctx := context.Background()
 	sessions := NewMemorySessionStore()

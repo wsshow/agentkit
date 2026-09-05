@@ -970,6 +970,12 @@ func (r *GoalRunner) recoverAttempt(ctx context.Context, goal *Goal) (*RunResult
 	if len(newMessages) == 0 {
 		return nil, r.blockRecovery(ctx, goal, "the previous process exited before session progress was saved")
 	}
+	if goal.PendingPrompt != "" {
+		first := newMessages[0]
+		if first == nil || first.Role != schema.User || userMessageText(first) != goal.PendingPrompt {
+			return nil, r.blockRecovery(ctx, goal, "agent session diverged from the recorded goal attempt")
+		}
+	}
 	last := newMessages[len(newMessages)-1]
 	if last != nil && last.Role == schema.Assistant && len(last.ToolCalls) == 0 {
 		result := runResultFromRecoveredMessages(newMessages)
