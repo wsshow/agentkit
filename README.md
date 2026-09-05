@@ -22,6 +22,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **Automatic context compaction** — Summarize contexts over token or message limits while preserving full conversation history
 - **On-demand skills** — Load reusable `SKILL.md` instructions from local directories or a custom backend
 - **Managed MCP connections** — Connect stdio, SSE, and Streamable HTTP servers with discovery, reconnection, filtering, and cleanup
+- **On-demand tool discovery** — Keep large tool catalogs out of model context until the model searches for what it needs
 - **Guarded tool integration** — Plug in any Eino-compatible tool with result-size limits, optional timeouts, audit hooks, and automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
@@ -165,6 +166,9 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     },
     Skills: &agentkit.SkillsConfig{                       // on-demand SKILL.md loading (optional)
         Paths: []string{"./skills"},
+    },
+    ToolSearch: &agentkit.ToolSearchConfig{               // large on-demand tool catalog (optional)
+        Tools: []agentkit.Tool{rareToolA, rareToolB},
     },
     MCP: &agentkit.MCPConfig{                             // managed MCP servers (optional)
         Servers: []agentkit.MCPServerConfig{{
@@ -523,6 +527,24 @@ ToolPolicy: &agentkit.ToolPolicy{
 ```
 
 Aliases are validated against all local, skill, and MCP tool names during `New`; collisions and references to missing canonical tools fail immediately. Every text tool result is limited to `DefaultToolResultMaxChars` (100,000 Unicode characters) by default and receives a truncation marker when cut. Set `MaxResultChars` to `-1` to disable the limit. `Timeout` uses cooperative context cancellation, so custom tools should stop promptly when `ctx.Done()` is closed. `BeforeTool` may reject a call by returning an error, while `AfterTool` receives duration, error, retained text size, and truncation metadata. Hooks must be concurrency-safe because tools run in parallel by default. The same protections cover normal, streaming, and multimodal tools. `Middlewares` accepts `agentkit.ToolMiddleware` for advanced interception.
+
+AgentKit also repairs dangling tool calls before every model request. This is enabled automatically so a canceled or interrupted tool batch cannot leave history in a shape rejected by OpenAI-compatible APIs.
+
+### On-Demand Tool Search
+
+Keep frequently used tools in `Tools`. Put a large catalog of specialized tools behind one optional configuration:
+
+```go
+ToolSearch: &agentkit.ToolSearchConfig{
+    Tools: []agentkit.Tool{
+        lookupWeather,
+        searchTickets,
+        queryWarehouse,
+    },
+}
+```
+
+For the dynamic catalog, the model initially sees only the `tool_search` meta-tool; regular `Tools` remain visible. Matching tools become visible after a search and still pass through the same `ToolPolicy` timeouts, limits, hooks, aliases, and middleware. Small tool sets should stay in `Tools`; search adds an extra decision and is valuable only when tool schemas would otherwise consume meaningful context. Set `UseModelNative: true` only for a model/provider that implements native tool search. The name `tool_search` is reserved while this feature is enabled.
 
 ### Steering & Follow-Up
 

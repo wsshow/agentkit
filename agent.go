@@ -89,6 +89,7 @@ type Config struct {
 	Compaction          *CompactionConfig          // 自动上下文压缩（可选）
 	Skills              *SkillsConfig              // 按需加载 SKILL.md（可选）
 	MCP                 *MCPConfig                 // 自动连接并管理 MCP 服务器（可选）
+	ToolSearch          *ToolSearchConfig          // 大型工具集按需搜索（可选）
 }
 
 // Agent 提供事件流驱动的交互能力。
@@ -206,8 +207,15 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		a.pendingInterrupts = cloneInterruptPoints(loadedSession.PendingInterrupts)
 	}
 
-	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+4)
+	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+5)
 	handlers = append(handlers, cfg.Handlers...)
+	if cfg.ToolSearch != nil {
+		middleware, err := newToolSearchMiddleware(ctx, cfg.ToolSearch)
+		if err != nil {
+			return nil, err
+		}
+		handlers = append(handlers, middleware)
+	}
 	toolCallRepair, err := patchtoolcalls.New(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("agentkit: configure tool call repair: %w", err)
@@ -242,12 +250,19 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		mcpConnections = connections
 		tools = append(tools, mcpTools...)
 	}
-	if err := validateCombinedToolNames(ctx, tools, cfg.Skills); err != nil {
+	allTools := append(append([]Tool(nil), tools...), dynamicTools(cfg.ToolSearch)...)
+	if err := validateCombinedToolNames(ctx, allTools, cfg.Skills); err != nil {
 		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
 	}
-	knownToolNames, err := validateToolPolicy(ctx, tools, cfg.Skills, cfg.ToolPolicy)
+	if err := validateReservedToolNames(ctx, allTools, cfg.ToolSearch, cfg.ToolPolicy); err != nil {
+		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
+	}
+	knownToolNames, err := validateToolPolicy(ctx, allTools, cfg.Skills, cfg.ToolPolicy)
 	if err != nil {
 		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
+	}
+	if cfg.ToolSearch != nil {
+		knownToolNames[toolSearchToolName] = struct{}{}
 	}
 	a.knownToolNames = knownToolNames
 
@@ -262,7 +277,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		ModelFailoverConfig: cfg.ModelFailoverConfig,
 	}
 
-	if len(tools) > 0 || cfg.ToolPolicy != nil || cfg.Skills != nil {
+	if len(tools) > 0 || cfg.ToolPolicy != nil || cfg.Skills != nil || cfg.ToolSearch != nil {
 		agentCfg.ToolsConfig = adk.ToolsConfig{
 			ToolsNodeConfig: cfg.ToolPolicy.toolsNodeConfig(tools),
 		}
@@ -326,6 +341,9 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 		return err
 	}
 	if err := validateMCPConfig(cfg.MCP); err != nil {
+		return err
+	}
+	if err := validateToolSearchConfig(cfg.ToolSearch); err != nil {
 		return err
 	}
 	return nil

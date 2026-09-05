@@ -22,6 +22,7 @@
 - **自动上下文压缩** — 超过 token 或消息阈值时自动摘要，完整历史与模型上下文分离保存
 - **按需技能** — 从本地目录或自定义后端加载可复用的 `SKILL.md` 指令
 - **MCP 连接管理** — 连接 stdio、SSE、Streamable HTTP 服务器，自动发现、重连、筛选并释放资源
+- **按需工具发现** — 大型工具目录不会一次性塞入模型上下文，模型搜索后才加载所需工具
 - **受保护的工具集成** — 接入任何 Eino 兼容工具，内置结果大小限制、可选超时、审计钩子和自动调用处理
 - **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
@@ -165,6 +166,9 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     },
     Skills: &agentkit.SkillsConfig{                       // 按需加载 SKILL.md（可选）
         Paths: []string{"./skills"},
+    },
+    ToolSearch: &agentkit.ToolSearchConfig{               // 大型按需工具目录（可选）
+        Tools: []agentkit.Tool{rareToolA, rareToolB},
     },
     MCP: &agentkit.MCPConfig{                             // 托管 MCP 服务器（可选）
         Servers: []agentkit.MCPServerConfig{{
@@ -523,6 +527,24 @@ ToolPolicy: &agentkit.ToolPolicy{
 ```
 
 `New` 会根据全部本地、Skill 和 MCP 工具校验别名，别名冲突或引用不存在的正式工具都会立即失败。所有文本工具结果默认最多保留 `DefaultToolResultMaxChars`（100,000 个 Unicode 字符），截断时会附加提示标记；将 `MaxResultChars` 设为 `-1` 可关闭限制。`Timeout` 使用 `context` 协作取消，因此自定义工具应在 `ctx.Done()` 关闭后及时停止。`BeforeTool` 可通过返回错误拒绝调用，`AfterTool` 会收到耗时、错误、保留文本大小和截断信息。工具默认并行执行，因此钩子必须并发安全。这些保护统一覆盖普通、流式及多模态工具。高级拦截场景仍可通过 `Middlewares` 传入 `agentkit.ToolMiddleware`。
+
+AgentKit 还会在每次模型请求前自动修复没有配对结果的工具调用。该能力默认开启，取消或中断的工具批次不会再留下被 OpenAI 兼容接口拒绝的历史格式。
+
+### 按需工具搜索
+
+常用工具继续放在 `Tools`；数量较多、使用频率较低的专业工具只需放进一个可选配置：
+
+```go
+ToolSearch: &agentkit.ToolSearchConfig{
+    Tools: []agentkit.Tool{
+        lookupWeather,
+        searchTickets,
+        queryWarehouse,
+    },
+}
+```
+
+对于动态目录，模型起初只看到 `tool_search` 元工具；普通 `Tools` 仍然可见。搜索命中后模型才会看到对应动态工具，它们仍统一经过 `ToolPolicy` 的超时、大小限制、钩子、别名和中间件。小型工具集应继续直接使用 `Tools`；工具搜索会多一次决策，只在工具 schema 已明显占用上下文时才值得启用。仅当模型提供商支持原生工具搜索协议时设置 `UseModelNative: true`。启用后 `tool_search` 为保留名称。
 
 ### 转向与后续消息
 
