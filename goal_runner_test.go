@@ -883,6 +883,46 @@ func TestGoalRunnerResumesHITLWithoutStartingANewIteration(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerDoesNotStartOverExistingSessionInterrupt(t *testing.T) {
+	ctx := context.Background()
+	const callID = "ordinary-approval"
+	sessions := NewMemorySessionStore()
+	model := NewMockChatModel(MockModelToolCallWithID(
+		callID, "approve_action", `{"action":"ordinary"}`,
+	))
+	agent, err := New(ctx, &Config{
+		Name:    "worker",
+		Model:   model,
+		Tools:   []Tool{newCheckpointApprovalTool(t)},
+		Session: &SessionConfig{ID: "existing-interrupt-session", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	result, err := agent.Ask(ctx, "ordinary interrupted work")
+	if err != nil {
+		t.Fatalf("create ordinary interrupt: %v", err)
+	}
+	if result == nil || !result.IsInterrupted() || len(agent.PendingInterrupts()) != 1 {
+		t.Fatalf("ordinary run result = %#v, pending = %#v", result, agent.PendingInterrupts())
+	}
+	runner, err := NewGoalRunner(agent, nil)
+	if err != nil {
+		t.Fatalf("create goal runner: %v", err)
+	}
+
+	if _, err := runner.Start(ctx, GoalRequest{ID: "must-not-exist", Objective: "new goal"}); !errors.Is(err, ErrResumeRequired) {
+		t.Fatalf("Start() error = %v, want ErrResumeRequired", err)
+	}
+	if _, err := sessions.GoalStore().Load(ctx, "must-not-exist"); !errors.Is(err, ErrGoalNotFound) {
+		t.Fatalf("goal was persisted over an existing interrupt: %v", err)
+	}
+	if got := len(model.Calls()); got != 1 {
+		t.Fatalf("model calls = %d, want only the ordinary interrupted run", got)
+	}
+}
+
 func TestModelGoalEvaluatorParsesFencedJSON(t *testing.T) {
 	ctx := context.Background()
 	model := NewMockChatModel(MockModelText("preface\n```json\n{\"complete\":true,\"reason\":\"verified\",\"next_prompt\":\"ignored\"}\n```"))

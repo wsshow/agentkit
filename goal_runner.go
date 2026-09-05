@@ -312,6 +312,9 @@ func (r *GoalRunner) beginStart(ctx context.Context, request GoalRequest) (runCt
 			retErr = errors.Join(retErr, release())
 		}
 	}()
+	if len(r.agent.PendingInterrupts()) > 0 {
+		return nil, nil, nil, ErrResumeRequired
+	}
 	if _, err := goalStoreLoad(runCtx, r.store, request.ID); err == nil {
 		return nil, nil, nil, fmt.Errorf("%w: %s", ErrGoalExists, request.ID)
 	} else if !errors.Is(err, ErrGoalNotFound) {
