@@ -121,7 +121,8 @@ func (e *emitter) Emit(event Event) {
 		return
 	}
 	diagnostic := Event{
-		Type: EventError, Agent: event.Agent, Delegation: cloneDelegation(event.Delegation), Error: errors.Join(panicErrs...),
+		Type: EventError, Agent: event.Agent, SessionID: event.SessionID,
+		Delegation: cloneDelegation(event.Delegation), Error: errors.Join(panicErrs...),
 	}
 	for index, fn := range subs {
 		if _, panicked := failed[index]; panicked {

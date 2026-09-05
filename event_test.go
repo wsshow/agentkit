@@ -83,12 +83,12 @@ func TestEmitterIsolatesSubscriberPanics(t *testing.T) {
 		second = append(second, event)
 	})
 
-	emitter.Emit(Event{Type: EventAgentStart, Agent: "assistant"})
+	emitter.Emit(Event{Type: EventAgentStart, Agent: "assistant", SessionID: "session-1"})
 	for name, events := range map[string][]Event{"first": first, "second": second} {
 		if len(events) != 2 || events[0].Type != EventAgentStart || events[1].Type != EventError {
 			t.Fatalf("%s subscriber events = %#v", name, events)
 		}
-		if events[1].Agent != "assistant" || !errors.Is(events[1].Error, ErrSubscriberPanic) {
+		if events[1].Agent != "assistant" || events[1].SessionID != "session-1" || !errors.Is(events[1].Error, ErrSubscriberPanic) {
 			t.Fatalf("%s subscriber diagnostic = %#v", name, events[1])
 		}
 	}
