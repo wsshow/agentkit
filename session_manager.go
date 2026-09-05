@@ -422,7 +422,12 @@ func (m *SessionManager) Delete(ctx context.Context, id string) error {
 	session, err := sessionStoreLoad(ctx, m.store, id)
 	if errors.Is(err, ErrSessionNotFound) {
 		if m.ownerID != "" {
-			return nil
+			// The durable record may have been removed by another process while
+			// this manager still owns an in-memory Agent. There is no remaining
+			// record to authorize or resource namespace to delete, but the local
+			// instance must still be closed so Delete cannot leave a split-brain
+			// session behind.
+			return m.closeActiveLocked(ctx, id)
 		}
 	} else if err != nil {
 		return err

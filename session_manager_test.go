@@ -248,6 +248,31 @@ func TestSessionManagerOwnerIsolation(t *testing.T) {
 	}
 }
 
+func TestSessionManagerDeleteClosesActiveAgentAfterExternalRemoval(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	manager := newTestSessionManager(t, store, "owner")
+	defer manager.Close()
+
+	agent, err := manager.CreateWithOptions(ctx, CreateSessionOptions{ID: "session"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(ctx, "session"); err != nil {
+		t.Fatalf("external Delete() error = %v", err)
+	}
+
+	if err := manager.Delete(ctx, "session"); err != nil {
+		t.Fatalf("manager Delete() error = %v", err)
+	}
+	if !agentCloseStarted(agent) {
+		t.Fatal("active Agent remained open after its durable session was removed")
+	}
+	if got := manager.ActiveSessionIDs(); len(got) != 0 {
+		t.Fatalf("ActiveSessionIDs() = %v, want empty", got)
+	}
+}
+
 func TestSessionManagerRejectsUnauthorizedFactoryAgent(t *testing.T) {
 	ctx := context.Background()
 	authoritative := NewMemorySessionStore()
