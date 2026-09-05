@@ -28,19 +28,25 @@ const (
 // Goal 是一个可跨进程重启恢复的目标快照。
 // LastResponse、LastReason 和 NextPrompt 用于在每个执行步骤之间恢复自动推进状态。
 type Goal struct {
-	ID              string     `json:"id"`
-	SessionID       string     `json:"session_id"`
-	Objective       string     `json:"objective"`
-	SuccessCriteria string     `json:"success_criteria,omitempty"`
-	Status          GoalStatus `json:"status"`
-	Iteration       int        `json:"iteration"`
-	MaxIterations   int        `json:"max_iterations"`
-	LastResponse    string     `json:"last_response,omitempty"`
-	LastReason      string     `json:"last_reason,omitempty"`
-	NextPrompt      string     `json:"next_prompt,omitempty"`
-	LastError       string     `json:"last_error,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                  string     `json:"id"`
+	SessionID           string     `json:"session_id"`
+	Objective           string     `json:"objective"`
+	SuccessCriteria     string     `json:"success_criteria,omitempty"`
+	Status              GoalStatus `json:"status"`
+	Iteration           int        `json:"iteration"`
+	MaxIterations       int        `json:"max_iterations"`
+	LastResponse        string     `json:"last_response,omitempty"`
+	LastReason          string     `json:"last_reason,omitempty"`
+	NextPrompt          string     `json:"next_prompt,omitempty"`
+	LastError           string     `json:"last_error,omitempty"`
+	InProgress          bool       `json:"in_progress,omitempty"`
+	AwaitingInterrupt   bool       `json:"awaiting_interrupt,omitempty"`
+	PendingEvaluation   bool       `json:"pending_evaluation,omitempty"`
+	AttemptIteration    int        `json:"attempt_iteration,omitempty"`
+	HistoryMessageCount int        `json:"history_message_count,omitempty"`
+	PendingPrompt       string     `json:"pending_prompt,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 // GoalInfo 是用于目标列表展示的轻量元数据。
@@ -166,6 +172,12 @@ func validateGoal(ctx context.Context, goal *Goal) error {
 	}
 	if goal.Iteration < 0 {
 		return fmt.Errorf("agentkit: goal iteration must not be negative: %d", goal.Iteration)
+	}
+	if goal.AttemptIteration < 0 {
+		return fmt.Errorf("agentkit: goal attempt iteration must not be negative: %d", goal.AttemptIteration)
+	}
+	if goal.HistoryMessageCount < 0 {
+		return fmt.Errorf("agentkit: goal history message count must not be negative: %d", goal.HistoryMessageCount)
 	}
 	if goal.MaxIterations <= 0 {
 		return fmt.Errorf("agentkit: goal max iterations must be positive: %d", goal.MaxIterations)

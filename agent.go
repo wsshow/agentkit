@@ -93,6 +93,7 @@ type Config struct {
 // Agent 提供事件流驱动的交互能力。
 type Agent struct {
 	name            string
+	model           ChatModel
 	runner          *adk.Runner
 	state           *State
 	emtr            *emitter
@@ -185,6 +186,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 
 	a := &Agent{
 		name:         cfg.Name,
+		model:        cfg.Model,
 		state:        newState(),
 		emtr:         newEmitter(),
 		checkPointID: checkPointID,
