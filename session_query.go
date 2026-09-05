@@ -69,9 +69,13 @@ func QuerySessions(ctx context.Context, store SessionStore, query SessionQuery) 
 		return SessionPage{}, err
 	}
 	if backend, ok := store.(SessionQueryStore); ok {
-		return callPersistence("session query", func() (SessionPage, error) {
+		page, err := callPersistence("session query", func() (SessionPage, error) {
 			return backend.QuerySessions(ctx, query)
 		})
+		if err != nil {
+			return SessionPage{}, err
+		}
+		return validateSessionPage(page, query, cursor)
 	}
 	infos, err := sessionStoreList(ctx, store)
 	if err != nil {
@@ -79,6 +83,79 @@ func QuerySessions(ctx context.Context, store SessionStore, query SessionQuery) 
 	}
 	sortSessionInfos(infos)
 	return paginateSessionInfos(ctx, infos, query, cursor)
+}
+
+func validateSessionPage(page SessionPage, query SessionQuery, cursor *sessionPageCursor) (SessionPage, error) {
+	if len(page.Sessions) > query.Limit {
+		return SessionPage{}, fmt.Errorf("%w: session query returned %d entries for limit %d",
+			ErrInvalidPersistenceData, len(page.Sessions), query.Limit)
+	}
+	cloned := SessionPage{NextCursor: page.NextCursor}
+	if page.Sessions != nil {
+		cloned.Sessions = make([]SessionInfo, len(page.Sessions))
+	}
+	seen := make(map[string]struct{}, len(page.Sessions))
+	for index, info := range page.Sessions {
+		if err := validateSessionInfo(info); err != nil {
+			return SessionPage{}, fmt.Errorf("%w: invalid session query entry %d: %w",
+				ErrInvalidPersistenceData, index, err)
+		}
+		if _, exists := seen[info.ID]; exists {
+			return SessionPage{}, fmt.Errorf("%w: session query returned duplicate ID %q",
+				ErrInvalidPersistenceData, info.ID)
+		}
+		seen[info.ID] = struct{}{}
+		if !sessionMatchesQuery(info, query) || !sessionAfterCursor(info, cursor) {
+			return SessionPage{}, fmt.Errorf("%w: session query entry %q does not match the request",
+				ErrInvalidPersistenceData, info.ID)
+		}
+		if index > 0 && !sessionInfosOrdered(page.Sessions[index-1], info) {
+			return SessionPage{}, fmt.Errorf("%w: session query entries are not ordered at ID %q",
+				ErrInvalidPersistenceData, info.ID)
+		}
+		info.Tags = append([]string(nil), info.Tags...)
+		cloned.Sessions[index] = info
+	}
+	if page.NextCursor == "" {
+		return cloned, nil
+	}
+	if len(page.Sessions) == 0 {
+		return SessionPage{}, fmt.Errorf("%w: empty session page has a next cursor", ErrInvalidPersistenceData)
+	}
+	_, next, err := validateSessionQuery(SessionQuery{Cursor: page.NextCursor})
+	if err != nil {
+		return SessionPage{}, fmt.Errorf("%w: invalid session query next cursor: %w",
+			ErrInvalidPersistenceData, err)
+	}
+	last := page.Sessions[len(page.Sessions)-1]
+	if next == nil || next.ID != last.ID || !next.UpdatedAt.Equal(last.UpdatedAt) {
+		return SessionPage{}, fmt.Errorf("%w: session query next cursor does not match its last entry",
+			ErrInvalidPersistenceData)
+	}
+	return cloned, nil
+}
+
+func validateSessionInfo(info SessionInfo) error {
+	if err := validateManagedSessionID(info.ID); err != nil {
+		return err
+	}
+	if info.CreatedAt.IsZero() {
+		return errors.New("session creation time is required")
+	}
+	if info.UpdatedAt.IsZero() {
+		return errors.New("session update time is required")
+	}
+	if info.MessageCount < 0 || info.ContextMessageCount < 0 || info.PendingInterruptCount < 0 {
+		return errors.New("session counts must not be negative")
+	}
+	return nil
+}
+
+func sessionInfosOrdered(previous, current SessionInfo) bool {
+	if previous.UpdatedAt.After(current.UpdatedAt) {
+		return true
+	}
+	return previous.UpdatedAt.Equal(current.UpdatedAt) && previous.ID < current.ID
 }
 
 // QuerySessions 在内存快照上完成筛选和分页。

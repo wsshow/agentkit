@@ -178,6 +178,81 @@ func TestQuerySessionsValidatesInputAndGuardsBackendPanics(t *testing.T) {
 	}
 }
 
+func TestQuerySessionsValidatesAndCopiesBackendPages(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	valid := SessionInfo{
+		SessionMetadata: SessionMetadata{OwnerID: "owner", Tags: []string{"prod"}},
+		ID:              "valid", CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+	}
+	source := SessionPage{Sessions: []SessionInfo{valid}}
+	store := &fixedSessionQueryStore{SessionStore: NewMemorySessionStore(), page: source}
+	page, err := QuerySessions(ctx, store, SessionQuery{OwnerID: "owner", Limit: 1})
+	if err != nil {
+		t.Fatalf("QuerySessions() error = %v", err)
+	}
+	page.Sessions[0].Tags[0] = "mutated"
+	if source.Sessions[0].Tags[0] != "prod" {
+		t.Fatal("query result retained backend-owned tag data")
+	}
+
+	older := valid
+	older.ID = "older"
+	older.UpdatedAt = now.Add(-time.Minute)
+	wrongCursorPage, err := paginateSessionInfos(ctx, []SessionInfo{older, valid}, SessionQuery{Limit: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		page  SessionPage
+		query SessionQuery
+	}{
+		{name: "over limit", page: SessionPage{Sessions: []SessionInfo{valid, older}}, query: SessionQuery{Limit: 1}},
+		{name: "invalid entry", page: SessionPage{Sessions: []SessionInfo{{ID: "missing-times"}}}, query: SessionQuery{Limit: 1}},
+		{name: "duplicate", page: SessionPage{Sessions: []SessionInfo{valid, valid}}, query: SessionQuery{Limit: 2}},
+		{name: "filter mismatch", page: source, query: SessionQuery{OwnerID: "another", Limit: 1}},
+		{name: "wrong order", page: SessionPage{Sessions: []SessionInfo{older, valid}}, query: SessionQuery{Limit: 2}},
+		{
+			name:  "cursor mismatch",
+			page:  SessionPage{Sessions: []SessionInfo{valid}, NextCursor: wrongCursorPage.NextCursor},
+			query: SessionQuery{Limit: 1},
+		},
+		{name: "empty continuation", page: SessionPage{NextCursor: wrongCursorPage.NextCursor}, query: SessionQuery{Limit: 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fixedSessionQueryStore{SessionStore: NewMemorySessionStore(), page: tt.page}
+			if _, err := QuerySessions(ctx, store, tt.query); !errors.Is(err, ErrInvalidPersistenceData) {
+				t.Fatalf("QuerySessions() error = %v, want ErrInvalidPersistenceData", err)
+			}
+		})
+	}
+}
+
+func TestQuerySessionsValidatesAndCopiesListFallback(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	source := []SessionInfo{{
+		SessionMetadata: SessionMetadata{Tags: []string{"source"}},
+		ID:              "session", CreatedAt: now, UpdatedAt: now,
+	}}
+	store := &fixedSessionListStore{SessionStore: NewMemorySessionStore(), infos: source}
+	page, err := QuerySessions(ctx, store, SessionQuery{})
+	if err != nil {
+		t.Fatalf("QuerySessions() error = %v", err)
+	}
+	page.Sessions[0].Tags[0] = "mutated"
+	if source[0].Tags[0] != "source" {
+		t.Fatal("list fallback retained backend-owned tag data")
+	}
+
+	store.infos = []SessionInfo{{ID: "missing-times"}}
+	if _, err := QuerySessions(ctx, store, SessionQuery{}); !errors.Is(err, ErrInvalidPersistenceData) {
+		t.Fatalf("QuerySessions(invalid list) error = %v, want ErrInvalidPersistenceData", err)
+	}
+}
+
 func TestAgentPreservesSessionMetadataAndRejectsArchivedSession(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()
@@ -246,4 +321,22 @@ type panickingSessionQueryStore struct {
 
 func (*panickingSessionQueryStore) QuerySessions(context.Context, SessionQuery) (SessionPage, error) {
 	panic("boom")
+}
+
+type fixedSessionQueryStore struct {
+	SessionStore
+	page SessionPage
+}
+
+func (s *fixedSessionQueryStore) QuerySessions(context.Context, SessionQuery) (SessionPage, error) {
+	return s.page, nil
+}
+
+type fixedSessionListStore struct {
+	SessionStore
+	infos []SessionInfo
+}
+
+func (s *fixedSessionListStore) List(context.Context) ([]SessionInfo, error) {
+	return s.infos, nil
 }

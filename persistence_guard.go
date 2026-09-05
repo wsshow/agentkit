@@ -60,7 +60,29 @@ func sessionStoreDelete(ctx context.Context, store SessionStore, id string) erro
 }
 
 func sessionStoreList(ctx context.Context, store SessionStore) ([]SessionInfo, error) {
-	return callPersistence("session list", func() ([]SessionInfo, error) { return store.List(ctx) })
+	infos, err := callPersistence("session list", func() ([]SessionInfo, error) { return store.List(ctx) })
+	if err != nil {
+		return nil, err
+	}
+	var cloned []SessionInfo
+	if infos != nil {
+		cloned = make([]SessionInfo, len(infos))
+	}
+	seen := make(map[string]struct{}, len(infos))
+	for index, info := range infos {
+		if err := validateSessionInfo(info); err != nil {
+			return nil, fmt.Errorf("%w: invalid session list entry %d: %w",
+				ErrInvalidPersistenceData, index, err)
+		}
+		if _, exists := seen[info.ID]; exists {
+			return nil, fmt.Errorf("%w: session list returned duplicate ID %q",
+				ErrInvalidPersistenceData, info.ID)
+		}
+		seen[info.ID] = struct{}{}
+		info.Tags = append([]string(nil), info.Tags...)
+		cloned[index] = info
+	}
+	return cloned, nil
 }
 
 func goalStoreLoad(ctx context.Context, store GoalStore, id string) (*Goal, error) {
