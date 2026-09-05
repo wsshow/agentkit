@@ -110,6 +110,102 @@ func TestGoalRunnerResumesPendingEvaluationAcrossAgentInstances(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerGeneratesIDAndResumesOnlyPendingGoal(t *testing.T) {
+	ctx := context.Background()
+	sessions := NewMemorySessionStore()
+	firstModel := NewMockChatModel(
+		MockModelText("all checks passed"),
+		MockModelError(errors.New("evaluator unavailable")),
+	)
+	firstAgent, err := New(ctx, &Config{
+		Name: "worker", Model: firstModel,
+		Session: &SessionConfig{ID: "auto-resume-session", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create first agent: %v", err)
+	}
+	firstRunner, err := NewGoalRunner(firstAgent, nil)
+	if err != nil {
+		t.Fatalf("create first goal runner: %v", err)
+	}
+	result, err := firstRunner.Start(ctx, GoalRequest{Objective: "finish checks"})
+	if err == nil {
+		t.Fatal("expected evaluator error")
+	}
+	if result == nil || result.Goal == nil || result.Goal.ID == "" {
+		t.Fatalf("generated goal result = %#v", result)
+	}
+	generatedID := result.Goal.ID
+	_ = firstAgent.Close()
+
+	secondAgent, err := New(ctx, &Config{
+		Name: "worker", Model: NewMockChatModel(MockModelText(`{"complete":true,"reason":"verified","next_prompt":""}`)),
+		Session: &SessionConfig{ID: "auto-resume-session", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create restored agent: %v", err)
+	}
+	t.Cleanup(func() { _ = secondAgent.Close() })
+	secondRunner, err := NewGoalRunner(secondAgent, nil)
+	if err != nil {
+		t.Fatalf("create restored goal runner: %v", err)
+	}
+	goals, err := secondRunner.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(goals) != 1 || goals[0].ID != generatedID {
+		t.Fatalf("List() = %#v, want generated goal %q", goals, generatedID)
+	}
+	result, err = secondRunner.ResumePending(ctx)
+	if err != nil {
+		t.Fatalf("ResumePending() error = %v", err)
+	}
+	if result.Goal.ID != generatedID || result.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("ResumePending() result = %#v", result.Goal)
+	}
+	if _, err := secondRunner.ResumePending(ctx); !errors.Is(err, ErrGoalNotFound) {
+		t.Fatalf("ResumePending() completed error = %v, want ErrGoalNotFound", err)
+	}
+}
+
+func TestGoalRunnerResumePendingRejectsAmbiguousGoalsAndFiltersSession(t *testing.T) {
+	ctx := context.Background()
+	sessions := NewMemorySessionStore()
+	for _, goal := range []*Goal{
+		{ID: "older", SessionID: "current", Objective: "one", Status: GoalStatusPaused, MaxIterations: 2},
+		{ID: "newer", SessionID: "current", Objective: "two", Status: GoalStatusActive, MaxIterations: 2},
+		{ID: "other", SessionID: "another", Objective: "three", Status: GoalStatusActive, MaxIterations: 2},
+	} {
+		if err := sessions.GoalStore().Save(ctx, goal); err != nil {
+			t.Fatalf("save goal %q: %v", goal.ID, err)
+		}
+	}
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: NewMockChatModel(),
+		Session: &SessionConfig{ID: "current", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, nil)
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+
+	goals, err := runner.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(goals) != 2 {
+		t.Fatalf("List() = %#v, want only two goals from current session", goals)
+	}
+	if _, err := runner.ResumePending(ctx); !errors.Is(err, ErrGoalResumeAmbiguous) {
+		t.Fatalf("ResumePending() error = %v, want ErrGoalResumeAmbiguous", err)
+	}
+}
+
 func TestGoalRunnerBlocksUncertainRecoveryUntilExplicitRetry(t *testing.T) {
 	ctx := context.Background()
 	sessions := NewMemorySessionStore()

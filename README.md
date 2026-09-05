@@ -340,13 +340,13 @@ if err != nil {
     log.Fatal(err)
 }
 result, err := goals.Start(ctx, agentkit.GoalRequest{
-    ID:              "release-v2",
+    ID:              "release-v2", // optional; a UUID is generated when omitted
     Objective:       "Prepare and verify the v2 release",
     SuccessCriteria: "Tests pass and release artifacts are ready",
 })
 ```
 
-Recreate the file store and Agent with the same session ID after a process restart, then call `goals.Resume(ctx, "release-v2")`. The built-in session stores automatically supply their matching `GoalStore`; a custom evaluator or store can be set through `GoalRunnerConfig`. Use `Get`, `Pause`, and `Clear` for control. When a goal reaches HITL, submit the pending IDs with `ResumeInterrupt`.
+Recreate the file store and Agent with the same session ID after a process restart, then call `goals.Resume(ctx, "release-v2")`. If the ID was generated automatically, `goals.ResumePending(ctx)` resumes the current session's only unfinished goal; it returns `ErrGoalResumeAmbiguous` instead of guessing when multiple goals exist. `goals.List(ctx)` returns only goals belonging to the current session. The built-in session stores automatically supply their matching `GoalStore`; a custom evaluator or store can be set through `GoalRunnerConfig`. Use `Get`, `Pause`, and `Clear` for control. When a goal reaches HITL, submit the pending IDs with `ResumeInterrupt`.
 
 Goal state is committed before work, after Agent output, and after evaluation. If saved session history proves that a step finished, `Resume` evaluates it without repeating the work. If the process could have exited after an external side effect but before session progress was saved, the goal becomes `blocked` with `ErrGoalRecoveryRequired`; only the explicit `Retry` method may replay that uncertain step. This favors safety over pretending to provide exactly-once external effects.
 

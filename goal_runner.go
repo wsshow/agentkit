@@ -29,11 +29,13 @@ var (
 	ErrGoalInterruptRequired = errors.New("agentkit: goal requires interrupt data")
 	// ErrGoalRecoveryRequired 表示上次进程可能在未保存工具结果时退出，自动重试可能重复副作用。
 	ErrGoalRecoveryRequired = errors.New("agentkit: goal recovery requires an explicit retry")
+	// ErrGoalResumeAmbiguous 表示当前会话有多个未完成目标，调用方必须明确指定目标 ID。
+	ErrGoalResumeAmbiguous = errors.New("agentkit: multiple unfinished goals require an explicit goal ID")
 )
 
 // GoalRequest 创建一个新的自动推进目标。
 type GoalRequest struct {
-	ID              string
+	ID              string // 可选；为空时自动生成 UUID
 	Objective       string
 	SuccessCriteria string
 	MaxIterations   int
@@ -250,6 +252,9 @@ func NewGoalRunner(agent *Agent, cfg *GoalRunnerConfig) (*GoalRunner, error) {
 
 // Start 创建并执行一个新目标。相同 ID 已存在时返回 ErrGoalExists，避免覆盖恢复点。
 func (r *GoalRunner) Start(ctx context.Context, request GoalRequest) (out *GoalRunResult, retErr error) {
+	if request.ID == "" {
+		request.ID = uuid.NewString()
+	}
 	if err := validateGoalRequest(ctx, request); err != nil {
 		return nil, err
 	}
@@ -365,6 +370,55 @@ func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map
 // Get 返回最新目标状态。
 func (r *GoalRunner) Get(ctx context.Context, id string) (*Goal, error) {
 	return r.loadForAgent(ctx, id)
+}
+
+// List 按更新时间从新到旧列出属于当前 Agent 会话的目标。
+func (r *GoalRunner) List(ctx context.Context) ([]GoalInfo, error) {
+	if ctx == nil {
+		return nil, errors.New("agentkit: context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	session := r.agent.Session()
+	if session == nil {
+		return nil, ErrSessionDisabled
+	}
+	all, err := r.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	goals := make([]GoalInfo, 0, len(all))
+	for _, goal := range all {
+		if goal.SessionID == session.ID {
+			goals = append(goals, goal)
+		}
+	}
+	return goals, nil
+}
+
+// ResumePending 自动恢复当前会话唯一的未完成目标。
+// 没有未完成目标时返回 ErrGoalNotFound；存在多个时返回 ErrGoalResumeAmbiguous，
+// 调用方可先使用 List 查看并通过 Resume 明确选择。
+func (r *GoalRunner) ResumePending(ctx context.Context) (*GoalRunResult, error) {
+	goals, err := r.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pending := make([]string, 0, len(goals))
+	for _, goal := range goals {
+		if goal.Status != GoalStatusCompleted {
+			pending = append(pending, goal.ID)
+		}
+	}
+	session := r.agent.Session()
+	if len(pending) == 0 {
+		return nil, fmt.Errorf("%w: no unfinished goal for session %q", ErrGoalNotFound, session.ID)
+	}
+	if len(pending) > 1 {
+		return nil, fmt.Errorf("%w for session %q: %s", ErrGoalResumeAmbiguous, session.ID, strings.Join(pending, ", "))
+	}
+	return r.Resume(ctx, pending[0])
 }
 
 // Pause 持久化暂停状态，并取消由当前 GoalRunner 发起的同一目标执行。
