@@ -218,7 +218,12 @@ func (m *SessionManager) OpenOrCreate(ctx context.Context, options CreateSession
 	if err != nil {
 		return nil, false, err
 	}
-	return m.createAndOpen(ctx, session)
+	agent, created, err = m.createAndOpen(ctx, session)
+	if err == nil || created || !errors.Is(err, ErrSessionAlreadyExists) {
+		return agent, created, err
+	}
+	agent, err = m.openLocked(ctx, session.ID)
+	return agent, false, err
 }
 
 // Open 打开已存在的会话。同一管理器重复打开相同 ID 会返回同一个活动 Agent。

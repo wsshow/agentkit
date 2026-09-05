@@ -231,6 +231,65 @@ func TestSessionManagerOpenOrCreate(t *testing.T) {
 	}
 }
 
+func TestSessionManagerOpenOrCreateConvergesAcrossManagers(t *testing.T) {
+	ctx := context.Background()
+	store := &synchronizedCreateSessionStore{
+		MemorySessionStore: NewMemorySessionStore(),
+		ready:              make(chan struct{}),
+		release:            make(chan struct{}),
+	}
+	managers := make([]*SessionManager, 2)
+	for index := range managers {
+		manager, err := NewSessionManager(&SessionManagerConfig{
+			Store: store,
+			AgentConfig: &Config{
+				Name: "assistant", Model: NewMockChatModel(),
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer manager.Close()
+		managers[index] = manager
+	}
+
+	type outcome struct {
+		agent   *Agent
+		created bool
+		err     error
+	}
+	outcomes := make(chan outcome, len(managers))
+	for _, manager := range managers {
+		go func() {
+			agent, created, err := manager.OpenOrCreate(ctx, CreateSessionOptions{ID: "shared"})
+			outcomes <- outcome{agent: agent, created: created, err: err}
+		}()
+	}
+	select {
+	case <-store.ready:
+	case <-time.After(time.Second):
+		t.Fatal("OpenOrCreate calls did not reach the concurrent load barrier")
+	}
+	close(store.release)
+
+	createdCount := 0
+	for range managers {
+		result := <-outcomes
+		if result.err != nil || result.agent == nil {
+			t.Fatalf("OpenOrCreate() = %#v, want an Agent without error", result)
+		}
+		if result.created {
+			createdCount++
+		}
+		if result.agent.Session().ID != "shared" {
+			t.Fatalf("opened session = %#v", result.agent.Session())
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("created count = %d, want 1", createdCount)
+	}
+}
+
 func TestSessionManagerMetadataArchiveListAndDelete(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()
@@ -809,4 +868,26 @@ func newTestSessionManager(t *testing.T, store SessionStore, ownerID string) *Se
 		t.Fatalf("NewSessionManager() error = %v", err)
 	}
 	return manager
+}
+
+type synchronizedCreateSessionStore struct {
+	*MemorySessionStore
+	loads   atomic.Int32
+	ready   chan struct{}
+	release chan struct{}
+}
+
+func (s *synchronizedCreateSessionStore) Load(ctx context.Context, id string) (*Session, error) {
+	count := s.loads.Add(1)
+	if count <= 2 {
+		if count == 2 {
+			close(s.ready)
+		}
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return s.MemorySessionStore.Load(ctx, id)
 }
