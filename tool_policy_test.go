@@ -3,6 +3,7 @@ package agentkit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -104,6 +105,26 @@ func TestToolPolicyHandlesUnknownTool(t *testing.T) {
 	}
 	if result.Text != "tool unavailable" || gotName != "missing" || gotArguments != `{"value":1}` {
 		t.Fatalf("unknown tool result = %#v, name %q, arguments %q", result, gotName, gotArguments)
+	}
+}
+
+func TestToolPolicyStringHandlerPanicsBecomeErrors(t *testing.T) {
+	policy := &ToolPolicy{
+		UnknownTool: func(context.Context, string, string) (string, error) {
+			panic("broken unknown handler")
+		},
+		RewriteArguments: func(context.Context, string, string) (string, error) {
+			panic("broken rewrite handler")
+		},
+	}
+	config := policy.toolsNodeConfig(nil)
+	for name, handler := range map[string]func(context.Context, string, string) (string, error){
+		"unknown": config.UnknownToolsHandler,
+		"rewrite": config.ToolArgumentsHandler,
+	} {
+		if _, err := handler(context.Background(), "tool", `{}`); !errors.Is(err, ErrToolPolicyPanic) {
+			t.Fatalf("%s handler error = %v, want ErrToolPolicyPanic", name, err)
+		}
 	}
 }
 

@@ -62,7 +62,7 @@ func (p *ToolPolicy) startTool(ctx context.Context, input *compose.ToolInput) (c
 		runCtx, cancel = context.WithTimeout(ctx, p.Timeout)
 	}
 	if p != nil && p.BeforeTool != nil {
-		if err := p.BeforeTool(runCtx, call); err != nil {
+		if err := invokeBeforeTool(p.BeforeTool, runCtx, call); err != nil {
 			cancel()
 			p.finishTool(ctx, call, started, ToolOutcome{Err: err})
 			return runCtx, func() {}, call, started, err
@@ -74,8 +74,42 @@ func (p *ToolPolicy) startTool(ctx context.Context, input *compose.ToolInput) (c
 func (p *ToolPolicy) finishTool(ctx context.Context, call ToolInvocation, started time.Time, outcome ToolOutcome) {
 	outcome.Duration = time.Since(started)
 	if p != nil && p.AfterTool != nil {
-		p.AfterTool(ctx, call, outcome)
+		if err := invokeAfterTool(p.AfterTool, ctx, call, outcome); err != nil {
+			emitToolPolicyError(ctx, err)
+		}
 	}
+}
+
+func invokeBeforeTool(
+	hook func(context.Context, ToolInvocation) error,
+	ctx context.Context,
+	call ToolInvocation,
+) (err error) {
+	defer recoverToolPolicyPanic("BeforeTool", &err)
+	return hook(ctx, call)
+}
+
+func invokeAfterTool(
+	hook func(context.Context, ToolInvocation, ToolOutcome),
+	ctx context.Context,
+	call ToolInvocation,
+	outcome ToolOutcome,
+) (err error) {
+	defer recoverToolPolicyPanic("AfterTool", &err)
+	hook(ctx, call, outcome)
+	return nil
+}
+
+func emitToolPolicyError(ctx context.Context, err error) {
+	if ctx == nil || err == nil {
+		return
+	}
+	emitter, _ := ctx.Value(emitterCtxKey{}).(*emitter)
+	if emitter == nil {
+		return
+	}
+	agentName, _ := ctx.Value(agentNameCtxKey{}).(string)
+	emitter.Emit(Event{Type: EventError, Agent: agentName, Error: err})
 }
 
 func invocationFromInput(input *compose.ToolInput) ToolInvocation {

@@ -134,6 +134,55 @@ func TestToolPolicyBeforeToolCanRejectCall(t *testing.T) {
 	}
 }
 
+func TestToolPolicyBeforeToolPanicBecomesError(t *testing.T) {
+	policy := &ToolPolicy{
+		BeforeTool: func(context.Context, ToolInvocation) error {
+			panic("broken guard")
+		},
+	}
+	called := false
+	endpoint := policy.executionMiddleware().Invokable(func(context.Context, *ToolInput) (*ToolOutput, error) {
+		called = true
+		return &ToolOutput{Result: "unexpected"}, nil
+	})
+	_, err := endpoint(context.Background(), &ToolInput{Name: "dangerous"})
+	if !errors.Is(err, ErrToolPolicyPanic) || called {
+		t.Fatalf("endpoint error = %v, called = %v", err, called)
+	}
+}
+
+func TestToolPolicyAfterToolPanicIsReportedWithoutFailingRun(t *testing.T) {
+	ctx := context.Background()
+	tool := MustMockTool("safe_result", "return result", func(context.Context, string) (string, error) {
+		return "result", nil
+	})
+	agent, err := New(ctx, &Config{
+		Name: "assistant",
+		Model: NewMockChatModel(
+			MockModelToolCallWithID("safe-call", "safe_result", `""`),
+			MockModelTextAfterToolResult("safe-call"),
+		),
+		Tools: MockTools(tool),
+		ToolPolicy: &ToolPolicy{AfterTool: func(context.Context, ToolInvocation, ToolOutcome) {
+			panic("broken observer")
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	defer agent.Close()
+	events := newMockEventRecorder()
+	agent.Subscribe(events.Record)
+	result, err := agent.Ask(ctx, "run")
+	if err != nil || result == nil || result.Text != "result" {
+		t.Fatalf("Ask() = %#v, %v", result, err)
+	}
+	diagnostic := events.Last(EventError)
+	if diagnostic == nil || !errors.Is(diagnostic.Error, ErrToolPolicyPanic) {
+		t.Fatalf("tool policy diagnostic = %#v", diagnostic)
+	}
+}
+
 func TestToolPolicyLimitsTextStream(t *testing.T) {
 	var outcome ToolOutcome
 	policy := &ToolPolicy{

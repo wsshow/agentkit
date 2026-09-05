@@ -2,12 +2,16 @@ package agentkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/eino/compose"
 )
+
+// ErrToolPolicyPanic 表示 ToolPolicy 的用户回调发生 panic。
+var ErrToolPolicyPanic = errors.New("agentkit: tool policy callback panicked")
 
 // ToolAlias 配置一个工具可接受的名称和顶层 JSON 参数别名。
 type ToolAlias struct {
@@ -49,11 +53,30 @@ func (p *ToolPolicy) toolsNodeConfig(tools []Tool) compose.ToolsNodeConfig {
 			ArgumentsAliases: arguments,
 		}
 	}
-	config.UnknownToolsHandler = p.UnknownTool
-	config.ToolArgumentsHandler = p.RewriteArguments
+	config.UnknownToolsHandler = guardedToolStringHandler("UnknownTool", p.UnknownTool)
+	config.ToolArgumentsHandler = guardedToolStringHandler("RewriteArguments", p.RewriteArguments)
 	config.ExecuteSequentially = p.Sequential
 	config.ToolCallMiddlewares = append(config.ToolCallMiddlewares, p.Middlewares...)
 	return config
+}
+
+func guardedToolStringHandler(
+	name string,
+	handler func(context.Context, string, string) (string, error),
+) func(context.Context, string, string) (string, error) {
+	if handler == nil {
+		return nil
+	}
+	return func(ctx context.Context, toolName, arguments string) (result string, err error) {
+		defer recoverToolPolicyPanic(name, &err)
+		return handler(ctx, toolName, arguments)
+	}
+}
+
+func recoverToolPolicyPanic(name string, err *error) {
+	if value := recover(); value != nil {
+		*err = fmt.Errorf("%w in %s: %v", ErrToolPolicyPanic, name, value)
+	}
 }
 
 func validateToolPolicy(ctx context.Context, tools []Tool, skills *SkillsConfig, policy *ToolPolicy) (map[string]struct{}, error) {
