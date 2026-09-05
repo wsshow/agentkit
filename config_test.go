@@ -145,6 +145,32 @@ func TestNewValidatesConfig(t *testing.T) {
 	}
 }
 
+func TestNewAlwaysValidatesLocalTools(t *testing.T) {
+	ctx := context.Background()
+	first := MustMockTool("duplicate", "first", func(context.Context, string) (string, error) {
+		return "", nil
+	})
+	second := MustMockTool("duplicate", "second", func(context.Context, string) (string, error) {
+		return "", nil
+	})
+	tests := []struct {
+		name  string
+		tools []Tool
+		want  string
+	}{
+		{name: "nil tool", tools: []Tool{nil}, want: "tool 0 is nil"},
+		{name: "duplicate tool", tools: []Tool{first.Tool, second.Tool}, want: `duplicate tool name "duplicate"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(ctx, &Config{Model: NewMockChatModel(), Tools: tt.tools})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("New() error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestAgentCannotRunAfterClose(t *testing.T) {
 	agent, err := New(context.Background(), &Config{Model: NewMockChatModel(MockModelText("unused"))})
 	if err != nil {

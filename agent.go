@@ -231,9 +231,9 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		}
 		mcpConnections = connections
 		tools = append(tools, mcpTools...)
-		if err := validateCombinedToolNames(ctx, tools, cfg.Skills); err != nil {
-			return nil, errors.Join(err, closeMCPConnections(mcpConnections))
-		}
+	}
+	if err := validateCombinedToolNames(ctx, tools, cfg.Skills); err != nil {
+		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
 	}
 
 	agentCfg := &adk.ChatModelAgentConfig{
