@@ -370,6 +370,57 @@ func TestAgentSessionAutomaticallyPersistsAndRestores(t *testing.T) {
 	}
 }
 
+func TestSaveSessionRejectsPartialRunningSnapshot(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	tool := MustMockTool("wait", "wait for release", func(ctx context.Context, _ string) (string, error) {
+		close(started)
+		select {
+		case <-release:
+			return "released", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	agent, err := New(ctx, &Config{
+		Name: "assistant",
+		Model: NewMockChatModel(
+			MockModelToolCallWithID("wait-call", "wait", `""`),
+			MockModelText("done"),
+		),
+		Tools:   MockTools(tool),
+		Session: &SessionConfig{ID: "session", Store: store},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+	runDone := make(chan error, 1)
+	go func() { runDone <- agent.Prompt(ctx, "start") }()
+	<-started
+
+	if err := agent.SaveSession(ctx); !errors.Is(err, ErrAgentRunning) {
+		t.Fatalf("SaveSession() error = %v, want ErrAgentRunning", err)
+	}
+	if _, err := store.Load(ctx, "session"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("running snapshot was persisted: %v", err)
+	}
+
+	close(release)
+	if err := <-runDone; err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+	saved, err := store.Load(ctx, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := schemaMessageContents(saved.Messages); !slices.Equal(got, []string{"start", "", "released", "done"}) {
+		t.Fatalf("saved history = %v", got)
+	}
+}
+
 func TestMemorySessionStoreRejectsStaleRevision(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()

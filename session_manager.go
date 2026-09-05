@@ -306,7 +306,7 @@ func (m *SessionManager) UpdateMetadata(ctx context.Context, id string, metadata
 		if err := m.authorize(current); err != nil {
 			return nil, err
 		}
-		if err := agent.saveSession(ctx, &metadata); err != nil {
+		if err := agent.saveSessionWhenIdle(ctx, &metadata); err != nil {
 			return nil, err
 		}
 		return agent.Session(), nil

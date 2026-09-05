@@ -31,7 +31,7 @@ func (a *Agent) persistSession(ctx context.Context, runErr error) error {
 	}
 	persistCtx, cancel := a.persistenceContext(ctx)
 	defer cancel()
-	if err := a.SaveSession(persistCtx); err != nil {
+	if err := a.saveSession(persistCtx, nil, true); err != nil {
 		a.emtr.Emit(Event{Type: EventError, Agent: a.name, Error: err})
 		return errors.Join(runErr, err)
 	}

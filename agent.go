@@ -856,10 +856,10 @@ func (a *Agent) ToolResultStore() ToolResultStore {
 // SaveSession 立即保存当前会话快照。
 // Prompt、Send、Continue 和 Resume 结束时会自动调用它。
 func (a *Agent) SaveSession(ctx context.Context) error {
-	return a.saveSession(ctx, nil)
+	return a.saveSession(ctx, nil, false)
 }
 
-func (a *Agent) saveSession(ctx context.Context, metadata *SessionMetadata) error {
+func (a *Agent) saveSession(ctx context.Context, metadata *SessionMetadata, allowRunning bool) error {
 	if ctx == nil {
 		return errors.New("agentkit: context is required")
 	}
@@ -873,6 +873,10 @@ func (a *Agent) saveSession(ctx context.Context, metadata *SessionMetadata) erro
 	if a.sessionStore == nil {
 		a.mu.Unlock()
 		return ErrSessionDisabled
+	}
+	if a.running && !allowRunning {
+		a.mu.Unlock()
+		return ErrAgentRunning
 	}
 	now := time.Now().UTC()
 	createdAt := a.sessionCreatedAt
@@ -909,6 +913,19 @@ func (a *Agent) saveSession(ctx context.Context, metadata *SessionMetadata) erro
 	a.sessionRevision = session.Revision + 1
 	a.mu.Unlock()
 	return nil
+}
+
+func (a *Agent) saveSessionWhenIdle(ctx context.Context, metadata *SessionMetadata) error {
+	for {
+		if _, err := a.sessionWhenIdle(ctx); err != nil {
+			return err
+		}
+		err := a.saveSession(ctx, metadata, false)
+		if errors.Is(err, ErrAgentRunning) {
+			continue
+		}
+		return err
+	}
 }
 
 // SetHistory 替换完整对话历史，并同步展示状态。

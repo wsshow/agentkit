@@ -304,7 +304,7 @@ func TestSessionManagerForkCopiesConversationWithoutOperationalState(t *testing.
 	}
 }
 
-func TestSessionManagerForkWaitsForSourceRunToSettle(t *testing.T) {
+func TestSessionManagerSnapshotOperationsWaitForSourceRunToSettle(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()
 	started := make(chan struct{})
@@ -350,6 +350,19 @@ func TestSessionManagerForkWaitsForSourceRunToSettle(t *testing.T) {
 	if _, err := store.Load(ctx, "too-early"); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("timed-out Fork created a target: %v", err)
 	}
+	updateCtx, cancelUpdate := context.WithTimeout(ctx, 20*time.Millisecond)
+	_, err = manager.UpdateMetadata(updateCtx, "source", SessionMetadata{Title: "too early"})
+	cancelUpdate()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("UpdateMetadata(running source) error = %v, want deadline exceeded", err)
+	}
+	persisted, err := store.Load(ctx, "source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Title != "" || len(persisted.Messages) != 0 {
+		t.Fatalf("metadata update persisted a partial run: %#v", persisted)
+	}
 
 	close(release)
 	if err := <-runDone; err != nil {
@@ -362,6 +375,10 @@ func TestSessionManagerForkWaitsForSourceRunToSettle(t *testing.T) {
 	contents := schemaMessageContents(target.History())
 	if !slices.Equal(contents, []string{"start", "", "released", "done"}) {
 		t.Fatalf("forked history = %v", contents)
+	}
+	updated, err := manager.UpdateMetadata(ctx, "source", SessionMetadata{Title: "settled"})
+	if err != nil || updated.Title != "settled" || len(updated.Messages) != 4 {
+		t.Fatalf("UpdateMetadata(settled source) = %#v, %v", updated, err)
 	}
 }
 
