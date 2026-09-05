@@ -146,6 +146,8 @@ err = manager.CloseContext(ctx)
 
 `CloseSession` releases Agent and MCP resources but keeps persistent data. `Delete` closes first and then removes the data. Closing the manager closes every active Agent but does not delete sessions.
 
+If another process has already removed the durable record, `Delete` still closes any Agent tracked by this manager. The call remains idempotent and cannot leave a local instance running after its session has disappeared from storage.
+
 Prefer `CloseSession` when application code has the session ID because it expresses the intended manager lifecycle. Direct `agent.Close` is also safe: the Agent notifies its manager after cleanup, the active registry is updated immediately, and the next `Open` creates a replacement.
 
 Operations for the same session are serialized and honor context cancellation while waiting. Different sessions are not serialized. The manager prevents duplicate active instances only inside that manager process; `Session.Revision` still prevents silent stale writes across managers or processes. Multi-replica execution needs a database-backed ownership or lease mechanism around work dispatch in addition to the storage interfaces.
