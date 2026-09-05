@@ -33,8 +33,14 @@ func validateToolSearchConfig(cfg *ToolSearchConfig) error {
 	return nil
 }
 
-func newToolSearchMiddleware(ctx context.Context, cfg *ToolSearchConfig) (ChatModelAgentMiddleware, error) {
-	middleware, err := toolsearch.New(ctx, &toolsearch.Config{
+func newToolSearchMiddleware(ctx context.Context, cfg *ToolSearchConfig) (middleware ChatModelAgentMiddleware, err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			middleware = nil
+			err = fmt.Errorf("%w: %v", ErrToolMetadataPanic, value)
+		}
+	}()
+	middleware, err = toolsearch.New(ctx, &toolsearch.Config{
 		DynamicTools:       append([]Tool(nil), cfg.Tools...),
 		UseModelToolSearch: cfg.UseModelNative,
 	})
@@ -56,7 +62,7 @@ func validateReservedToolNames(ctx context.Context, tools []Tool, cfg *ToolSearc
 		return nil
 	}
 	for index, item := range tools {
-		info, err := item.Info(ctx)
+		info, err := inspectToolInfo(ctx, item)
 		if err != nil {
 			return fmt.Errorf("agentkit: inspect tool %d for reserved names: %w", index, err)
 		}

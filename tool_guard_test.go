@@ -12,6 +12,43 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
+type panickingToolMetadata struct{}
+
+func (panickingToolMetadata) Info(context.Context) (*schema.ToolInfo, error) {
+	panic("broken metadata")
+}
+
+func TestNewIsolatesToolMetadataPanics(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		cfg  *Config
+	}{
+		{
+			name: "static tool",
+			cfg:  &Config{Model: NewMockChatModel(), Tools: []Tool{panickingToolMetadata{}}},
+		},
+		{
+			name: "dynamic tool",
+			cfg: &Config{
+				Model:      NewMockChatModel(),
+				ToolSearch: &ToolSearchConfig{Tools: []Tool{panickingToolMetadata{}}},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			agent, err := New(ctx, test.cfg)
+			if agent != nil {
+				_ = agent.Close()
+			}
+			if !errors.Is(err, ErrToolMetadataPanic) {
+				t.Fatalf("New() error = %v, want ErrToolMetadataPanic", err)
+			}
+		})
+	}
+}
+
 func TestToolPolicyLimitsToolResultAndReportsOutcome(t *testing.T) {
 	ctx := context.Background()
 	tool := MustMockTool("large", "return a large result", func(context.Context, string) (string, error) {

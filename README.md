@@ -25,7 +25,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **Managed MCP connections** — Connect stdio, SSE, and Streamable HTTP servers with discovery, reconnection, filtering, and cleanup
 - **On-demand tool discovery** — Keep large tool catalogs out of model context until the model searches for what it needs
 - **Recoverable large tool outputs** — Move oversized results out of context, persist them, and let the model read bounded chunks on demand
-- **Guarded tool integration** — Plug in any Eino-compatible tool with result-size limits, optional timeouts, audit hooks, and automatic tool-call handling
+- **Guarded tool integration** — Plug in any Eino-compatible tool with result-size limits, optional timeouts, panic isolation, audit hooks, and automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
 ## Installation

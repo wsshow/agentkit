@@ -117,7 +117,7 @@ func MockTools(items ...MockToolProvider) []Tool {
 		if t == nil {
 			continue
 		}
-		if info, err := t.Info(context.Background()); err == nil && info != nil && info.Name != "" {
+		if info, err := inspectToolInfo(context.Background(), t); err == nil && info != nil && info.Name != "" {
 			if _, ok := seen[info.Name]; ok {
 				continue
 			}

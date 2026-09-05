@@ -89,7 +89,7 @@ func validateToolPolicy(ctx context.Context, tools []Tool, skills *SkillsConfig,
 		canonicalNames[name] = struct{}{}
 	}
 	for index, item := range tools {
-		info, err := item.Info(ctx)
+		info, err := inspectToolInfo(ctx, item)
 		if err != nil {
 			return nil, fmt.Errorf("agentkit: inspect tool %d for policy: %w", index, err)
 		}

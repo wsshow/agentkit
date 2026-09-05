@@ -278,7 +278,7 @@ func connectMCP(ctx context.Context, cfg *MCPConfig) ([]Tool, []managedMCPConnec
 func validateMCPTools(ctx context.Context, server MCPServerConfig, tools []Tool) error {
 	matched := make(map[string]struct{}, len(tools))
 	for _, item := range tools {
-		info, err := item.Info(ctx)
+		info, err := inspectToolInfo(ctx, item)
 		if err != nil {
 			return fmt.Errorf("agentkit: inspect tool from MCP server %q: %w", server.Name, err)
 		}
@@ -368,7 +368,7 @@ func validateCombinedToolNames(ctx context.Context, tools []Tool, skills *Skills
 		if item == nil {
 			return fmt.Errorf("agentkit: tool %d is nil", index)
 		}
-		info, err := item.Info(ctx)
+		info, err := inspectToolInfo(ctx, item)
 		if err != nil {
 			return fmt.Errorf("agentkit: inspect tool %d: %w", index, err)
 		}

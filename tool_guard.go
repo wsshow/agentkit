@@ -20,6 +20,9 @@ const toolResultTruncatedMarker = "\n...[tool result truncated]"
 // ErrToolExecutionPanic 表示用户工具实现发生 panic。
 var ErrToolExecutionPanic = errors.New("agentkit: tool execution panicked")
 
+// ErrToolMetadataPanic 表示第三方工具在返回元数据时发生 panic。
+var ErrToolMetadataPanic = errors.New("agentkit: tool metadata panicked")
+
 // ToolInvocation 描述一次即将执行的工具调用。
 type ToolInvocation struct {
 	// Name 是解析别名后的正式工具名。
@@ -127,6 +130,16 @@ func recoverToolExecutionPanic(err *error) {
 	if value := recover(); value != nil {
 		*err = fmt.Errorf("%w: %v", ErrToolExecutionPanic, value)
 	}
+}
+
+func inspectToolInfo(ctx context.Context, item Tool) (info *schema.ToolInfo, err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			info = nil
+			err = fmt.Errorf("%w: %v", ErrToolMetadataPanic, value)
+		}
+	}()
+	return item.Info(ctx)
 }
 
 func invokeTool(next compose.InvokableToolEndpoint, ctx context.Context, input *compose.ToolInput) (output *compose.ToolOutput, err error) {
