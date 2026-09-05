@@ -468,6 +468,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     Name:  "assistant",
     Model: chatModel,
     MCP: &agentkit.MCPConfig{
+        InitializationTimeout: 30 * time.Second, // 可选；这是每个服务器的默认值
         Servers: []agentkit.MCPServerConfig{
             {
                 Name:       "search",
@@ -502,7 +503,7 @@ MCP: &agentkit.MCPConfig{
 },
 ```
 
-旧式 SSE 服务器可使用 `MCPTransportSSE`。`New` 会完整读取所有分页工具一次；服务器之后增删工具时需重建 Agent。暴露给模型的工具名必须唯一，因此当多个服务器或本地工具重名时应设置 `ToolPrefix`。`ToolNames` 中服务器未提供的名字会直接导致初始化失败，不会静默遗漏。
+旧式 SSE 服务器可使用 `MCPTransportSSE`。每个服务器的连接与首次完整分页工具发现共用默认 30 秒时限，可通过 `InitializationTimeout` 调整；调用方 context 更早的截止时间仍然优先。`New` 只读取一次工具列表，服务器之后增删工具时需重建 Agent。暴露给模型的工具名必须唯一，因此当多个服务器或本地工具重名时应设置 `ToolPrefix`。`ToolNames` 中服务器未提供的名字会直接导致初始化失败，不会静默遗漏。
 
 为避免单次响应耗尽模型上下文，MCP 结果默认最多保留 `DefaultMCPMaxResultChars`（100,000 个字符），工具描述最多保留 `DefaultMCPMaxDescriptionChars`（4,000 个字符）。在 `MCPConfig` 中将对应限制设为正数可自定义，设为 `-1` 可关闭限制。静态请求头会在初始化时复制；如果凭证需要动态刷新，请传入带认证 `RoundTripper` 的自定义 `HTTPClient`，并避免在代码中硬编码密钥。
 

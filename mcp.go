@@ -19,6 +19,8 @@ const (
 	DefaultMCPMaxResultChars = 100_000
 	// DefaultMCPMaxDescriptionChars 是单个 MCP 工具描述默认保留的最大字符数。
 	DefaultMCPMaxDescriptionChars = 4_000
+	// DefaultMCPInitializationTimeout 是每个 MCP 服务器连接与工具发现的默认总时限。
+	DefaultMCPInitializationTimeout = 30 * time.Second
 )
 
 // MCPTransport 表示 MCP 服务器传输方式。
@@ -44,6 +46,8 @@ type MCPConfig struct {
 	ClientName    string        // MCP 客户端名称，默认 "agentkit"
 	ClientVersion string        // MCP 客户端版本，默认 "dev"
 	KeepAlive     time.Duration // 大于 0 时定期 ping 服务器
+	// InitializationTimeout 限制每个服务器的连接与初始工具发现；零值使用 30 秒默认值。
+	InitializationTimeout time.Duration
 
 	// 0 使用安全默认值，-1 关闭限制，正数使用指定限制。
 	MaxResultChars      int
@@ -82,6 +86,9 @@ func validateMCPConfig(cfg *MCPConfig) error {
 	}
 	if cfg.KeepAlive < 0 {
 		return errors.New("agentkit: MCP keep alive must not be negative")
+	}
+	if cfg.InitializationTimeout < 0 {
+		return errors.New("agentkit: MCP initialization timeout must not be negative")
 	}
 	if cfg.MaxResultChars < -1 {
 		return errors.New("agentkit: MCP max result chars must be -1, 0, or positive")
@@ -197,6 +204,10 @@ func connectMCP(ctx context.Context, cfg *MCPConfig) ([]Tool, []managedMCPConnec
 	}
 	maxResultChars := configuredMCPLimit(cfg.MaxResultChars, DefaultMCPMaxResultChars)
 	maxDescriptionChars := configuredMCPLimit(cfg.MaxDescriptionChars, DefaultMCPMaxDescriptionChars)
+	initializationTimeout := cfg.InitializationTimeout
+	if initializationTimeout == 0 {
+		initializationTimeout = DefaultMCPInitializationTimeout
+	}
 
 	var tools []Tool
 	connections := make([]managedMCPConnection, 0, len(cfg.Servers))
@@ -205,9 +216,10 @@ func connectMCP(ctx context.Context, cfg *MCPConfig) ([]Tool, []managedMCPConnec
 	}
 
 	for _, server := range cfg.Servers {
+		serverCtx, cancelServer := context.WithTimeout(ctx, initializationTimeout)
 		connection := server.Session
 		if connection == nil {
-			managed, err := mcpsession.Connect(ctx, mcpsession.ServerConfig{
+			managed, err := mcpsession.Connect(serverCtx, mcpsession.ServerConfig{
 				Name: server.Name,
 				Transport: mcpsession.TransportConfig{
 					Type:       string(server.Transport),
@@ -223,6 +235,7 @@ func connectMCP(ctx context.Context, cfg *MCPConfig) ([]Tool, []managedMCPConnec
 				ClientOptions: &protocol.ClientOptions{KeepAlive: cfg.KeepAlive},
 			})
 			if err != nil {
+				cancelServer()
 				return fail(fmt.Errorf("agentkit: connect MCP server %q: %w", server.Name, err))
 			}
 			connection = managed
@@ -246,16 +259,20 @@ func connectMCP(ctx context.Context, cfg *MCPConfig) ([]Tool, []managedMCPConnec
 				return officialmcp.ToolNameMapperOutput{ExposedName: prefix + input.Tool.Name}, nil
 			}
 		}
-		serverTools, err := officialmcp.GetTools(ctx, toolConfig)
+		serverTools, err := officialmcp.GetTools(serverCtx, toolConfig)
 		if err != nil {
+			cancelServer()
 			return fail(fmt.Errorf("agentkit: load tools from MCP server %q: %w", server.Name, err))
 		}
 		if len(serverTools) == 0 {
+			cancelServer()
 			return fail(fmt.Errorf("agentkit: MCP server %q returned no matching tools", server.Name))
 		}
-		if err := validateMCPTools(ctx, server, serverTools); err != nil {
+		if err := validateMCPTools(serverCtx, server, serverTools); err != nil {
+			cancelServer()
 			return fail(err)
 		}
+		cancelServer()
 		tools = append(tools, serverTools...)
 	}
 	return tools, connections, nil

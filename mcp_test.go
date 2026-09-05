@@ -26,6 +26,7 @@ func TestValidateMCPConfig(t *testing.T) {
 	}{
 		{name: "no servers", cfg: &MCPConfig{}, want: "at least one server"},
 		{name: "negative keep alive", cfg: &MCPConfig{KeepAlive: -1, Servers: []MCPServerConfig{{Name: "test", Session: session}}}, want: "keep alive"},
+		{name: "negative initialization timeout", cfg: &MCPConfig{InitializationTimeout: -1, Servers: []MCPServerConfig{{Name: "test", Session: session}}}, want: "initialization timeout"},
 		{name: "invalid result limit", cfg: &MCPConfig{MaxResultChars: -2, Servers: []MCPServerConfig{{Name: "test", Session: session}}}, want: "max result chars"},
 		{name: "missing name", cfg: &MCPConfig{Servers: []MCPServerConfig{{Session: session}}}, want: "name is required"},
 		{name: "duplicate server", cfg: &MCPConfig{Servers: []MCPServerConfig{{Name: "same", Session: session}, {Name: "same", Session: session}}}, want: "duplicate MCP server name"},
@@ -121,6 +122,26 @@ func TestConnectMCPClosesEverySessionAfterPartialFailure(t *testing.T) {
 	}
 	if first.closeCount() != 1 || second.closeCount() != 1 {
 		t.Fatalf("close counts = %d, %d; want 1, 1", first.closeCount(), second.closeCount())
+	}
+}
+
+func TestConnectMCPBoundsToolDiscovery(t *testing.T) {
+	session := newFakeMCPClientSession("tool")
+	session.listWait = make(chan struct{})
+	cfg := &MCPConfig{
+		InitializationTimeout: 20 * time.Millisecond,
+		Servers:               []MCPServerConfig{{Name: "slow", Session: session}},
+	}
+	started := time.Now()
+	_, _, err := connectMCP(context.Background(), cfg)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("connectMCP() error = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("connectMCP() took %s, want bounded discovery", elapsed)
+	}
+	if got := session.closeCount(); got != 1 {
+		t.Fatalf("close count = %d, want 1", got)
 	}
 }
 
@@ -321,6 +342,7 @@ type fakeMCPClientSession struct {
 	calledTools []string
 	closes      int
 	closeErr    error
+	listWait    chan struct{}
 }
 
 type blockingMCPClientSession struct {
@@ -352,7 +374,14 @@ func fakeMCPTool(name string) *protocol.Tool {
 	}
 }
 
-func (s *fakeMCPClientSession) ListTools(_ context.Context, params *protocol.ListToolsParams) (*protocol.ListToolsResult, error) {
+func (s *fakeMCPClientSession) ListTools(ctx context.Context, params *protocol.ListToolsParams) (*protocol.ListToolsResult, error) {
+	if s.listWait != nil {
+		select {
+		case <-s.listWait:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.listErr != nil {
