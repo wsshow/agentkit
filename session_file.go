@@ -253,7 +253,21 @@ func (s *FileSessionStore) loadPath(path string) (*Session, error) {
 	if stored.Session == nil || stored.Session.ID == "" {
 		return nil, fmt.Errorf("agentkit: invalid session file %q", filepath.Base(path))
 	}
-	return cloneSession(stored.Session), nil
+	session := cloneSession(stored.Session)
+	if session.CreatedAt.IsZero() || session.UpdatedAt.IsZero() {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, fmt.Errorf("agentkit: inspect session file %q: %w", filepath.Base(path), err)
+		}
+		modified := info.ModTime().UTC()
+		if session.CreatedAt.IsZero() {
+			session.CreatedAt = modified
+		}
+		if session.UpdatedAt.IsZero() {
+			session.UpdatedAt = session.CreatedAt
+		}
+	}
+	return session, nil
 }
 
 func (s *FileSessionStore) path(id string) string {

@@ -3,6 +3,7 @@ package agentkit
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 )
@@ -107,6 +108,41 @@ func TestQuerySessionsFallsBackToList(t *testing.T) {
 	}
 	if len(page.Sessions) != 1 || page.Sessions[0].ID != "session" {
 		t.Fatalf("page = %#v", page)
+	}
+}
+
+func TestFileSessionStorePaginatesLegacySessionsWithoutTimestamps(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	for index, id := range []string{"newer", "older"} {
+		path := store.path(id)
+		data := []byte(`{"version":1,"session":{"id":"` + id + `","messages":[]}}`)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("write legacy session %q: %v", id, err)
+		}
+		modified := base.Add(-time.Duration(index) * time.Minute)
+		if err := os.Chtimes(path, modified, modified); err != nil {
+			t.Fatalf("set legacy session %q time: %v", id, err)
+		}
+	}
+
+	first, err := QuerySessions(ctx, store, SessionQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("QuerySessions(first) error = %v", err)
+	}
+	if len(first.Sessions) != 1 || first.Sessions[0].ID != "newer" || first.NextCursor == "" {
+		t.Fatalf("first page = %#v", first)
+	}
+	second, err := QuerySessions(ctx, store, SessionQuery{Limit: 1, Cursor: first.NextCursor})
+	if err != nil {
+		t.Fatalf("QuerySessions(second) error = %v", err)
+	}
+	if len(second.Sessions) != 1 || second.Sessions[0].ID != "older" || second.NextCursor != "" {
+		t.Fatalf("second page = %#v", second)
 	}
 }
 
