@@ -62,11 +62,13 @@ type MemorySessionStore struct {
 	mu          sync.RWMutex
 	sessions    map[string]*Session
 	checkpoints *MemoryCheckpointStore
+	goals       *MemoryGoalStore
 }
 
 var (
 	_ SessionStore            = (*MemorySessionStore)(nil)
 	_ CheckpointStoreProvider = (*MemorySessionStore)(nil)
+	_ GoalStoreProvider       = (*MemorySessionStore)(nil)
 )
 
 // NewMemorySessionStore 创建内存会话存储。
@@ -74,6 +76,7 @@ func NewMemorySessionStore() *MemorySessionStore {
 	return &MemorySessionStore{
 		sessions:    make(map[string]*Session),
 		checkpoints: NewMemoryCheckpointStore(),
+		goals:       NewMemoryGoalStore(),
 	}
 }
 
@@ -85,6 +88,16 @@ func (s *MemorySessionStore) CheckpointStore() CheckpointStore {
 		s.checkpoints = NewMemoryCheckpointStore()
 	}
 	return s.checkpoints
+}
+
+// GoalStore 返回与会话共享生命周期的内存目标存储。
+func (s *MemorySessionStore) GoalStore() GoalStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.goals == nil {
+		s.goals = NewMemoryGoalStore()
+	}
+	return s.goals
 }
 
 // Load 加载会话快照。

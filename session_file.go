@@ -24,11 +24,13 @@ type FileSessionStore struct {
 	dir         string
 	mu          sync.RWMutex
 	checkpoints *FileCheckpointStore
+	goals       *FileGoalStore
 }
 
 var (
 	_ SessionStore            = (*FileSessionStore)(nil)
 	_ CheckpointStoreProvider = (*FileSessionStore)(nil)
+	_ GoalStoreProvider       = (*FileSessionStore)(nil)
 )
 
 // NewFileSessionStore 创建文件会话存储。目录不存在时会自动创建。
@@ -44,12 +46,21 @@ func NewFileSessionStore(dir string) (*FileSessionStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &FileSessionStore{dir: cleanDir, checkpoints: checkpoints}, nil
+	goals, err := NewFileGoalStore(filepath.Join(cleanDir, ".goals"))
+	if err != nil {
+		return nil, err
+	}
+	return &FileSessionStore{dir: cleanDir, checkpoints: checkpoints, goals: goals}, nil
 }
 
 // CheckpointStore 返回与会话目录配套的文件检查点存储。
 func (s *FileSessionStore) CheckpointStore() CheckpointStore {
 	return s.checkpoints
+}
+
+// GoalStore 返回与会话目录配套的文件目标存储。
+func (s *FileSessionStore) GoalStore() GoalStore {
+	return s.goals
 }
 
 // Load 从文件加载会话快照。
