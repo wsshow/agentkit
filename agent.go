@@ -84,7 +84,7 @@ type Config struct {
 	ModelRetryConfig    *ModelRetryConfig          // 模型调用重试配置（可选）
 	ModelFailoverConfig *ModelFailoverConfig       // 模型失败转移配置（可选）
 	MaxIterations       int                        // 默认 20
-	PersistenceTimeout  time.Duration              // 取消后的内部持久化收尾超时；默认 30 秒
+	PersistenceTimeout  time.Duration              // 取消后的内部持久化收尾 context 超时；默认 30 秒
 	CheckPointStore     compose.CheckPointStore    // 自定义 CheckPoint 存储；默认使用 Session 配套存储或内存存储
 	Session             *SessionConfig             // 自动恢复并保存完整对话（可选）
 	Compaction          *CompactionConfig          // 自动上下文压缩（可选）

@@ -5,7 +5,8 @@ import (
 	"time"
 )
 
-// DefaultPersistenceTimeout 限制取消后的内部持久化收尾，避免异常存储永久阻塞任务退出。
+// DefaultPersistenceTimeout 是取消后的内部持久化收尾 context 默认时限。
+// 自定义存储必须及时响应 context，时限才能按预期生效。
 const DefaultPersistenceTimeout = 30 * time.Second
 
 func newPersistenceContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {

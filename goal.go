@@ -73,6 +73,7 @@ type GoalInfo struct {
 // GoalStore 管理持久化目标。
 // Load 在目标不存在时必须返回包装 ErrGoalNotFound 的错误；Delete 必须是幂等的。
 // 实现还必须可以安全地被多个 goroutine 调用，并且不得保留调用方传入的可变数据。
+// 所有方法必须及时响应 context 取消与截止时间。
 // Save 使用 Goal.Revision 进行乐观并发控制：新目标必须为 0，已有目标必须等于当前版本；
 // 存储成功后持久化版本加一，但不修改调用方传入的 Goal。
 type GoalStore interface {

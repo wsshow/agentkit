@@ -50,7 +50,7 @@ func (e *GoalLeaseHeldError) Unwrap() error {
 // AcquireGoalLease 对未过期租约必须返回包装 ErrGoalLeaseHeld 的错误；过期租约可被接管。
 // RenewGoalLease、SaveGoalWithLease 和 DeleteGoalWithLease 必须校验有效 Token，
 // 不匹配或已过期时返回包装 ErrGoalLeaseLost 的错误。ReleaseGoalLease 不得释放其他 Token。
-// 所有方法必须可以安全地被多个 goroutine 调用。
+// 所有方法必须可以安全地被多个 goroutine 调用，并及时响应 context 取消与截止时间。
 type GoalLeaseStore interface {
 	AcquireGoalLease(ctx context.Context, goalID, workerID string, duration time.Duration) (*GoalLease, error)
 	RenewGoalLease(ctx context.Context, lease *GoalLease, duration time.Duration) (*GoalLease, error)

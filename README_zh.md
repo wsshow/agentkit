@@ -409,7 +409,7 @@ key, ok := agentkit.GoalOperationKey(ctx, "publish-release")
 
 同一目标尝试跨进程恢复或显式 `Retry` 时会得到相同 key；成功进入下一次目标迭代后则会得到新 key。需要更完整审计信息时，`CurrentGoalRun` 会返回对应的 `GoalID`、`SessionID` 和 `Attempt`。唯一性仍须由外部系统保证，AgentKit 不会宣称通用 exactly-once。
 
-请求取消后的 Session、Checkpoint 和 Goal 内部收尾会使用有界 context。`Config.PersistenceTimeout` 默认为 `DefaultPersistenceTimeout`（30 秒），异常自定义存储不会再让任务永久无法退出；只有后端确实需要更久时才应调大。
+请求取消后的 Session、Checkpoint 和 Goal 内部收尾会使用带截止时间的 context。`Config.PersistenceTimeout` 默认为 `DefaultPersistenceTimeout`（30 秒）；只有后端确实需要更久时才应调大。内置存储会遵循该 context，自定义持久化实现也必须在它取消后及时返回。AgentKit 不会把结果未知的写入丢到后台继续，因为那会让最终是否提交变得不可判断。
 
 如果工作本身和随后的恢复状态落盘同时失败，GoalRunner 会用 `errors.Join` 一起返回，调用方可分别通过 `errors.Is` 判断。框架不会只报告模型/工具错误，却静默隐藏持久化恢复点可能已经陈旧。
 

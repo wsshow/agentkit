@@ -409,7 +409,7 @@ key, ok := agentkit.GoalOperationKey(ctx, "publish-release")
 
 The key is stable for the same goal attempt across process recovery and explicit `Retry`, while the next successful goal iteration receives a different key. `CurrentGoalRun` exposes the corresponding `GoalID`, `SessionID`, and `Attempt` when richer audit metadata is needed. The external system must still enforce uniqueness; AgentKit does not claim universal exactly-once execution.
 
-Internal session, checkpoint, and goal cleanup after cancellation uses a bounded context. `Config.PersistenceTimeout` defaults to `DefaultPersistenceTimeout` (30 seconds), so a broken custom store cannot prevent a run from exiting forever; raise it only when the persistence backend legitimately needs more time.
+Internal session, checkpoint, and goal cleanup after cancellation uses a context with a deadline. `Config.PersistenceTimeout` defaults to `DefaultPersistenceTimeout` (30 seconds); raise it only when the persistence backend legitimately needs more time. Built-in stores honor this context, and custom persistence implementations must also return promptly when it is canceled. AgentKit deliberately does not abandon an unknown write in a background goroutine because that would make its final commit outcome ambiguous.
 
 If work and the following recovery-state save both fail, GoalRunner returns them together with `errors.Join`; callers can detect both causes with `errors.Is`. It never reports only the model/tool error while silently hiding that durable recovery state may be stale.
 

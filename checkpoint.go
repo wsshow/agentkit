@@ -10,12 +10,12 @@ import (
 )
 
 // CheckpointStore 保存可恢复执行所需的检查点。
-// Set 的实现不得保留调用方传入的可变字节切片。
+// 实现必须及时响应每个方法的 context 取消与截止时间；Set 不得保留调用方传入的可变字节切片。
 type CheckpointStore = compose.CheckPointStore
 
 // CheckpointDeleter 是支持显式删除检查点的可选接口。
 // 内置存储均实现该接口；自定义存储也应实现它，以便 Reset、SetHistory
-// 和成功恢复后能够及时清理失效检查点。
+// 和成功恢复后能够及时清理失效检查点。Delete 必须及时响应 context 取消与截止时间。
 type CheckpointDeleter interface {
 	Delete(ctx context.Context, id string) error
 }

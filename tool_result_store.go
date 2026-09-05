@@ -36,7 +36,7 @@ type ToolResultInfo struct {
 // ToolResultStore 管理从上下文卸载的不可变工具结果。
 // Load 在结果不存在时必须返回包装 ErrToolResultNotFound 的错误。
 // Save 只允许创建新 ID，重复 ID 必须返回包装 ErrToolResultExists 的错误。
-// Delete 必须幂等；所有方法必须可以安全地被多个 goroutine 调用。
+// Delete 必须幂等；所有方法必须可以安全地被多个 goroutine 调用，并及时响应 context 取消与截止时间。
 type ToolResultStore interface {
 	Load(ctx context.Context, id string) (*StoredToolResult, error)
 	Save(ctx context.Context, result *StoredToolResult) error
