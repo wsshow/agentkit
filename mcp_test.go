@@ -325,6 +325,28 @@ func TestAgentCloseReturnsMCPErrorOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestAgentCloseIsolatesMCPPanicAndContinuesCleanup(t *testing.T) {
+	healthy := newFakeMCPClientSession("healthy")
+	broken := &panickingMCPClientSession{fakeMCPClientSession: newFakeMCPClientSession("broken")}
+	agent, err := New(context.Background(), &Config{
+		Model: NewMockChatModel(),
+		MCP: &MCPConfig{Servers: []MCPServerConfig{
+			{Name: "healthy", Session: healthy},
+			{Name: "broken", Session: broken},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	err = agent.Close()
+	if !errors.Is(err, ErrMCPClosePanic) {
+		t.Fatalf("Close() error = %v, want ErrMCPClosePanic", err)
+	}
+	if got := healthy.closeCount(); got != 1 {
+		t.Fatalf("healthy close count = %d, want 1", got)
+	}
+}
+
 func TestAgentCloseContextBoundsMCPShutdown(t *testing.T) {
 	session := &blockingMCPClientSession{
 		fakeMCPClientSession: newFakeMCPClientSession("tool"),
@@ -384,6 +406,14 @@ type blockingMCPClientSession struct {
 	started chan struct{}
 	release chan struct{}
 	once    sync.Once
+}
+
+type panickingMCPClientSession struct {
+	*fakeMCPClientSession
+}
+
+func (s *panickingMCPClientSession) Close() error {
+	panic("broken close")
 }
 
 func (s *blockingMCPClientSession) Close() error {

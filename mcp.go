@@ -23,6 +23,9 @@ const (
 	DefaultMCPInitializationTimeout = 30 * time.Second
 )
 
+// ErrMCPClosePanic 表示 MCP 会话在关闭时发生 panic。
+var ErrMCPClosePanic = errors.New("agentkit: MCP session close panicked")
+
 // MCPTransport 表示 MCP 服务器传输方式。
 type MCPTransport string
 
@@ -390,11 +393,20 @@ func closeMCPConnections(connections []managedMCPConnection) error {
 		if connection.session == nil {
 			continue
 		}
-		if err := connection.session.Close(); err != nil {
+		if err := closeMCPConnection(connection.session); err != nil {
 			errs = append(errs, fmt.Errorf("agentkit: close MCP server %q: %w", connection.name, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func closeMCPConnection(session MCPClientSession) (err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			err = fmt.Errorf("%w: %v", ErrMCPClosePanic, value)
+		}
+	}()
+	return session.Close()
 }
 
 func closeMCPConnectionsAfterInitialization(ctx context.Context, cfg *MCPConfig, connections []managedMCPConnection) error {
