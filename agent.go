@@ -130,6 +130,7 @@ type Agent struct {
 	sessionID        string
 	sessionCreatedAt time.Time
 	sessionUpdatedAt time.Time
+	sessionRevision  uint64
 	sessionSaveMu    sync.Mutex
 
 	mcpConnections []managedMCPConnection
@@ -203,6 +204,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		a.sessionID = loadedSession.ID
 		a.sessionCreatedAt = loadedSession.CreatedAt
 		a.sessionUpdatedAt = loadedSession.UpdatedAt
+		a.sessionRevision = loadedSession.Revision
 	}
 	a.restoreHistory(history, contextHistory, loadedSession != nil && loadedSession.Context != nil)
 	if loadedSession != nil {
@@ -699,6 +701,7 @@ func (a *Agent) Session() *Session {
 		Context:           a.sessionContextLocked(),
 		CheckpointID:      a.checkPointID,
 		PendingInterrupts: cloneInterruptPoints(a.pendingInterrupts),
+		Revision:          a.sessionRevision,
 	}
 }
 
@@ -737,6 +740,7 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 		Context:           a.sessionContextLocked(),
 		CheckpointID:      a.checkPointID,
 		PendingInterrupts: cloneInterruptPoints(a.pendingInterrupts),
+		Revision:          a.sessionRevision,
 	}
 	store := a.sessionStore
 	a.mu.Unlock()
@@ -748,6 +752,7 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 	a.mu.Lock()
 	a.sessionCreatedAt = createdAt
 	a.sessionUpdatedAt = now
+	a.sessionRevision = session.Revision + 1
 	a.mu.Unlock()
 	return nil
 }

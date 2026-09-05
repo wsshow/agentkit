@@ -310,7 +310,7 @@ err = store.Delete(ctx, "user-123") // 删除不存在的会话也会成功
 
 它们也会提供不可变的 `ToolResultStore`，用于保存不应长期留在模型上下文里的完整工具结果。不使用会话时可直接创建 `agentkit.NewMemoryToolResultStore` 或 `agentkit.NewFileToolResultStore`；自定义会话后端可额外实现 `agentkit.ToolResultStoreProvider`。
 
-测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`；如需自动提供持久化检查点，可额外实现 `agentkit.CheckpointStoreProvider`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。同一个会话 ID 同一时间应只由一个 Agent 写入；内置存储保证并发安全，但不会擅自合并两段分叉的对话。
+测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`；如需自动提供持久化检查点，可额外实现 `agentkit.CheckpointStoreProvider`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。内置存储使用 `Session.Revision` 做乐观并发控制：两个 Agent 从同一版本恢复时，陈旧写入会返回 `ErrSessionConflict`，不会静默覆盖较新的历史。自定义存储也应提供相同的 compare-and-swap 语义；分叉对话不会被擅自合并。
 
 ### 持久化 Goal 模式
 

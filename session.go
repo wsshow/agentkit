@@ -16,6 +16,8 @@ import (
 var (
 	// ErrSessionNotFound 表示会话存储中不存在指定会话。
 	ErrSessionNotFound = errors.New("agentkit: session not found")
+	// ErrSessionConflict 表示会话已被其他调用方更新，当前快照不能覆盖新状态。
+	ErrSessionConflict = errors.New("agentkit: session revision conflict")
 	// ErrSessionDisabled 表示 Agent 未配置会话存储。
 	ErrSessionDisabled = errors.New("agentkit: session persistence is not configured")
 )
@@ -35,6 +37,7 @@ type Session struct {
 	Context           []*schema.Message `json:"context,omitempty"`            // 压缩后的模型上下文；nil 表示与 Messages 相同
 	CheckpointID      string            `json:"checkpoint_id,omitempty"`      // 当前可恢复执行的检查点标识
 	PendingInterrupts []InterruptPoint  `json:"pending_interrupts,omitempty"` // 等待 Resume 的中断点
+	Revision          uint64            `json:"revision"`                     // 乐观并发控制版本
 }
 
 // SessionInfo 是用于会话列表展示的轻量元数据。
@@ -45,11 +48,14 @@ type SessionInfo struct {
 	MessageCount          int       `json:"message_count"`
 	ContextMessageCount   int       `json:"context_message_count"`
 	PendingInterruptCount int       `json:"pending_interrupt_count"`
+	Revision              uint64    `json:"revision"`
 }
 
 // SessionStore 管理多个持久化会话。
 // Load 在会话不存在时必须返回包装 ErrSessionNotFound 的错误；Delete 必须是幂等的。
 // 实现还必须可以安全地被多个 goroutine 调用，并且不得保留调用方传入的可变切片。
+// Save 使用 Session.Revision 进行乐观并发控制：新会话必须为 0，已有会话必须等于当前版本；
+// 存储成功后持久化版本加一，但不修改调用方传入的 Session。
 type SessionStore interface {
 	Load(ctx context.Context, id string) (*Session, error)
 	Save(ctx context.Context, session *Session) error
@@ -127,7 +133,7 @@ func (s *MemorySessionStore) Load(ctx context.Context, id string) (*Session, err
 	return cloneSession(session), nil
 }
 
-// Save 保存并完全替换会话快照。
+// Save 保存并完全替换会话快照，拒绝覆盖更新版本。
 func (s *MemorySessionStore) Save(ctx context.Context, session *Session) error {
 	if err := validateSession(ctx, session); err != nil {
 		return err
@@ -137,6 +143,18 @@ func (s *MemorySessionStore) Save(ctx context.Context, session *Session) error {
 	if s.sessions == nil {
 		s.sessions = make(map[string]*Session)
 	}
+	if current := s.sessions[session.ID]; current != nil {
+		if session.Revision != current.Revision {
+			s.mu.Unlock()
+			return fmt.Errorf("%w: session %q has revision %d, current revision is %d",
+				ErrSessionConflict, session.ID, session.Revision, current.Revision)
+		}
+	} else if session.Revision != 0 {
+		s.mu.Unlock()
+		return fmt.Errorf("%w: session %q does not exist at revision %d",
+			ErrSessionConflict, session.ID, session.Revision)
+	}
+	cloned.Revision++
 	s.sessions[session.ID] = cloned
 	s.mu.Unlock()
 	return nil
@@ -238,6 +256,7 @@ func sessionInfo(session *Session) SessionInfo {
 		MessageCount:          len(session.Messages),
 		ContextMessageCount:   contextCount,
 		PendingInterruptCount: len(session.PendingInterrupts),
+		Revision:              session.Revision,
 	}
 }
 

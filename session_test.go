@@ -39,6 +39,9 @@ func TestMemorySessionStoreCopiesAndListsSessions(t *testing.T) {
 	if got := loaded.Messages[0].Content; got != "original" {
 		t.Fatalf("loaded content = %q, want %q", got, "original")
 	}
+	if loaded.Revision != 1 {
+		t.Fatalf("loaded revision = %d, want 1", loaded.Revision)
+	}
 	loaded.Messages[0].Content = "changed after load"
 	reloaded, err := store.Load(ctx, "older")
 	if err != nil {
@@ -57,6 +60,9 @@ func TestMemorySessionStoreCopiesAndListsSessions(t *testing.T) {
 	}
 	if infos[1].MessageCount != 1 {
 		t.Fatalf("message count = %d, want 1", infos[1].MessageCount)
+	}
+	if infos[1].Revision != 1 {
+		t.Fatalf("session info revision = %d, want 1", infos[1].Revision)
 	}
 
 	if err := store.Delete(ctx, "older"); err != nil {
@@ -88,6 +94,7 @@ func TestFileSessionStoreRoundTripAndSafeFileName(t *testing.T) {
 		t.Fatalf("Save() error = %v", err)
 	}
 	broken := cloneSession(session)
+	broken.Revision = 1
 	broken.Messages[0].Content = "must not replace the valid session"
 	broken.Messages[0].Extra = map[string]any{"unsupported": make(chan int)}
 	if err := store.Save(ctx, broken); err == nil {
@@ -124,6 +131,9 @@ func TestFileSessionStoreRoundTripAndSafeFileName(t *testing.T) {
 	}
 	if loaded.ID != session.ID || len(loaded.Messages) != 2 || loaded.Messages[1].Content != "world" || len(loaded.Context) != 1 {
 		t.Fatalf("loaded session = %#v", loaded)
+	}
+	if loaded.Revision != 1 {
+		t.Fatalf("loaded revision = %d, want 1", loaded.Revision)
 	}
 	if loaded.Messages[0].Content != "hello" {
 		t.Fatalf("failed save replaced valid content with %q", loaded.Messages[0].Content)
@@ -202,12 +212,149 @@ func TestAgentSessionAutomaticallyPersistsAndRestores(t *testing.T) {
 	if snapshot == nil || snapshot.ID != "conversation-1" || len(snapshot.Messages) != 4 {
 		t.Fatalf("Session() = %#v", snapshot)
 	}
+	if snapshot.Revision != 2 {
+		t.Fatalf("session revision = %d, want 2", snapshot.Revision)
+	}
 	if snapshot.CreatedAt.IsZero() || snapshot.UpdatedAt.Before(snapshot.CreatedAt) {
 		t.Fatalf("session timestamps = created %v, updated %v", snapshot.CreatedAt, snapshot.UpdatedAt)
 	}
 	snapshot.Messages[0].Content = "changed snapshot"
 	if got := second.History()[0].Content; got != "first prompt" {
 		t.Fatalf("mutating Session() changed agent history to %q", got)
+	}
+}
+
+func TestMemorySessionStoreRejectsStaleRevision(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	if err := store.Save(ctx, &Session{ID: "shared", Messages: []*schema.Message{schema.UserMessage("initial")}}); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+
+	first, err := store.Load(ctx, "shared")
+	if err != nil {
+		t.Fatalf("first Load() error = %v", err)
+	}
+	stale, err := store.Load(ctx, "shared")
+	if err != nil {
+		t.Fatalf("second Load() error = %v", err)
+	}
+	first.Messages[0].Content = "first writer"
+	if err := store.Save(ctx, first); err != nil {
+		t.Fatalf("first update Save() error = %v", err)
+	}
+	stale.Messages[0].Content = "stale writer"
+	if err := store.Save(ctx, stale); !errors.Is(err, ErrSessionConflict) {
+		t.Fatalf("stale Save() error = %v, want ErrSessionConflict", err)
+	}
+
+	persisted, err := store.Load(ctx, "shared")
+	if err != nil {
+		t.Fatalf("final Load() error = %v", err)
+	}
+	if persisted.Revision != 2 || persisted.Messages[0].Content != "first writer" {
+		t.Fatalf("persisted session = %#v, want revision 2 from first writer", persisted)
+	}
+}
+
+func TestFileSessionStoreRejectsStaleRevisionAfterReopen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	firstStore, err := NewFileSessionStore(dir)
+	if err != nil {
+		t.Fatalf("NewFileSessionStore() error = %v", err)
+	}
+	if err := firstStore.Save(ctx, &Session{ID: "shared", Messages: []*schema.Message{schema.UserMessage("initial")}}); err != nil {
+		t.Fatalf("initial Save() error = %v", err)
+	}
+	stale, err := firstStore.Load(ctx, "shared")
+	if err != nil {
+		t.Fatalf("stale Load() error = %v", err)
+	}
+
+	secondStore, err := NewFileSessionStore(dir)
+	if err != nil {
+		t.Fatalf("reopen NewFileSessionStore() error = %v", err)
+	}
+	current, err := secondStore.Load(ctx, "shared")
+	if err != nil {
+		t.Fatalf("current Load() error = %v", err)
+	}
+	current.Messages[0].Content = "second store"
+	if err := secondStore.Save(ctx, current); err != nil {
+		t.Fatalf("current Save() error = %v", err)
+	}
+	stale.Messages[0].Content = "stale first store"
+	if err := firstStore.Save(ctx, stale); !errors.Is(err, ErrSessionConflict) {
+		t.Fatalf("stale Save() error = %v, want ErrSessionConflict", err)
+	}
+}
+
+func TestFileSessionStoreUpgradesLegacyRevisionOnSave(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileSessionStore() error = %v", err)
+	}
+	const legacy = `{"version":1,"session":{"id":"legacy","messages":[]}}`
+	if err := os.WriteFile(store.path("legacy"), []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy session error = %v", err)
+	}
+
+	loaded, err := store.Load(ctx, "legacy")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if loaded.Revision != 0 {
+		t.Fatalf("legacy revision = %d, want 0", loaded.Revision)
+	}
+	if err := store.Save(ctx, loaded); err != nil {
+		t.Fatalf("Save() legacy session error = %v", err)
+	}
+	upgraded, err := store.Load(ctx, "legacy")
+	if err != nil {
+		t.Fatalf("Load() upgraded session error = %v", err)
+	}
+	if upgraded.Revision != 1 {
+		t.Fatalf("upgraded revision = %d, want 1", upgraded.Revision)
+	}
+}
+
+func TestAgentsReportConcurrentSessionConflict(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	newAgent := func(response string) *Agent {
+		agent, err := New(ctx, &Config{
+			Name:  "assistant",
+			Model: NewMockChatModel(MockModelText(response)),
+			Session: &SessionConfig{
+				ID:    "shared",
+				Store: store,
+			},
+		})
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		return agent
+	}
+
+	first := newAgent("first response")
+	defer first.Close()
+	stale := newAgent("stale response")
+	defer stale.Close()
+	if err := first.Prompt(ctx, "first prompt"); err != nil {
+		t.Fatalf("first Prompt() error = %v", err)
+	}
+	if err := stale.Prompt(ctx, "stale prompt"); !errors.Is(err, ErrSessionConflict) {
+		t.Fatalf("stale Prompt() error = %v, want ErrSessionConflict", err)
+	}
+
+	persisted, err := store.Load(ctx, "shared")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := schemaMessageContents(persisted.Messages); !slices.Equal(got, []string{"first prompt", "first response"}) {
+		t.Fatalf("persisted messages = %v, want first Agent history", got)
 	}
 }
 

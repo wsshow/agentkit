@@ -86,23 +86,36 @@ func (s *FileSessionStore) Load(ctx context.Context, id string) (*Session, error
 	return s.load(id)
 }
 
-// Save 通过原子文件替换保存会话快照。
+// Save 通过原子文件替换保存会话快照，并拒绝覆盖更新版本。
 func (s *FileSessionStore) Save(ctx context.Context, session *Session) error {
 	if err := validateSession(ctx, session); err != nil {
 		return err
 	}
-
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current, err := s.load(session.ID)
+	if err != nil && !errors.Is(err, ErrSessionNotFound) {
+		return err
+	}
+	if current != nil {
+		if session.Revision != current.Revision {
+			return fmt.Errorf("%w: session %q has revision %d, current revision is %d",
+				ErrSessionConflict, session.ID, session.Revision, current.Revision)
+		}
+	} else if session.Revision != 0 {
+		return fmt.Errorf("%w: session %q does not exist at revision %d",
+			ErrSessionConflict, session.ID, session.Revision)
+	}
+	stored := normalizedSession(session)
+	stored.Revision++
 	data, err := json.MarshalIndent(storedSession{
 		Version: fileSessionVersion,
-		Session: normalizedSession(session),
+		Session: stored,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("agentkit: encode session %q: %w", session.ID, err)
 	}
 	data = append(data, '\n')
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	temp, err := os.CreateTemp(s.dir, ".session-*.tmp")
 	if err != nil {

@@ -310,7 +310,7 @@ Both built-in session stores automatically provide a matching checkpoint store. 
 
 They also provide an immutable `ToolResultStore` for complete tool outputs that should live outside the model context. Use `agentkit.NewMemoryToolResultStore` or `agentkit.NewFileToolResultStore` directly when no session is configured; custom session backends can implement `agentkit.ToolResultStoreProvider`.
 
-Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend; it may additionally implement `agentkit.CheckpointStoreProvider` to supply durable checkpoints automatically. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Only one Agent should write a given session ID at a time: the built-in stores are concurrency-safe, but they do not merge divergent conversations.
+Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend; it may additionally implement `agentkit.CheckpointStoreProvider` to supply durable checkpoints automatically. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Built-in stores use `Session.Revision` for optimistic concurrency control: when two Agents restore the same version, the stale writer receives `ErrSessionConflict` instead of silently replacing newer history. Custom stores should provide the same compare-and-swap behavior; divergent conversations are intentionally not merged automatically.
 
 ### Durable Goal Runs
 
