@@ -19,6 +19,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **Reasoning model support** — First-class support for thinking/reasoning models (DeepSeek-R1, o1, etc.) with streaming reasoning output
 - **Multimodal input** — Send text, images, audio, video, and files via `Send()` with ergonomic constructors
 - **Session persistence** — Automatically save and restore complete conversations with built-in concurrent memory and atomic file stores
+- **Durable goal runs** — Persist an objective, evaluate completion after each step, and resume safely after cancellation or restart
 - **Automatic context compaction** — Summarize contexts over token or message limits while preserving full conversation history
 - **On-demand skills** — Load reusable `SKILL.md` instructions from local directories or a custom backend
 - **Managed MCP connections** — Connect stdio, SSE, and Streamable HTTP servers with discovery, reconnection, filtering, and cleanup
@@ -306,6 +307,46 @@ err = store.Delete(ctx, "user-123") // deleting a missing session also succeeds
 Both built-in session stores automatically provide a matching checkpoint store. A file-backed session can therefore resume a HITL interrupt after the Agent or process is recreated without additional configuration. Pending interrupt IDs are available through `Agent.PendingInterrupts` and `Session.PendingInterrupts`. A successful `Resume` consumes the checkpoint; `ClearCheckpoint`, `Reset`, `SetHistory`, and session deletion invalidate stale checkpoints. Without `Session`, configure durable checkpoints directly with `agentkit.NewFileCheckpointStore` and `Config.CheckPointStore`.
 
 Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend; it may additionally implement `agentkit.CheckpointStoreProvider` to supply durable checkpoints automatically. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Only one Agent should write a given session ID at a time: the built-in stores are concurrency-safe, but they do not merge divergent conversations.
+
+### Durable Goal Runs
+
+`GoalRunner` turns a durable objective into normal, checkpointed Agent steps. After each step, the primary model checks the result against the success criteria. An incomplete goal receives a concrete continuation prompt and runs again, up to a bounded iteration limit:
+
+```go
+store, err := agentkit.NewFileSessionStore("./data/agent")
+if err != nil {
+    log.Fatal(err)
+}
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "release-agent",
+    Model: chatModel,
+    Session: &agentkit.SessionConfig{
+        ID:    "release-session",
+        Store: store,
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer agent.Close()
+
+goals, err := agentkit.NewGoalRunner(agent, nil)
+if err != nil {
+    log.Fatal(err)
+}
+result, err := goals.Start(ctx, agentkit.GoalRequest{
+    ID:              "release-v2",
+    Objective:       "Prepare and verify the v2 release",
+    SuccessCriteria: "Tests pass and release artifacts are ready",
+})
+```
+
+Recreate the file store and Agent with the same session ID after a process restart, then call `goals.Resume(ctx, "release-v2")`. The built-in session stores automatically supply their matching `GoalStore`; a custom evaluator or store can be set through `GoalRunnerConfig`. Use `Get`, `Pause`, and `Clear` for control. When a goal reaches HITL, submit the pending IDs with `ResumeInterrupt`.
+
+Goal state is committed before work, after Agent output, and after evaluation. If saved session history proves that a step finished, `Resume` evaluates it without repeating the work. If the process could have exited after an external side effect but before session progress was saved, the goal becomes `blocked` with `ErrGoalRecoveryRequired`; only the explicit `Retry` method may replay that uncertain step. This favors safety over pretending to provide exactly-once external effects.
+
+One worker should own a goal ID at a time. Built-in memory and file stores protect goroutines and reject stale revisions, but the file store is intended for a local single-process worker. Distributed deployments should implement database-backed `SessionStore`, `CheckpointStore`, and `GoalStore`, and use their job system's lease or claim mechanism around `Start`/`Resume`. `GoalRunner` does not keep running after its host process stops; a supervisor should restart the worker and call `Resume`.
 
 ### Automatic Context Compaction
 

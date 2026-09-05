@@ -19,6 +19,7 @@
 - **推理模型支持** — 原生支持思考/推理模型（DeepSeek-R1、o1 等），流式输出推理过程
 - **多模态输入** — 通过 `Send()` 发送文本、图片、音频、视频、文件，配套简洁构造函数
 - **会话持久化** — 自动保存和恢复完整对话，内置并发安全的内存与原子文件存储
+- **持久化目标运行** — 保存目标、逐步判断完成度，并在取消或重启后安全恢复
 - **自动上下文压缩** — 超过 token 或消息阈值时自动摘要，完整历史与模型上下文分离保存
 - **按需技能** — 从本地目录或自定义后端加载可复用的 `SKILL.md` 指令
 - **MCP 连接管理** — 连接 stdio、SSE、Streamable HTTP 服务器，自动发现、重连、筛选并释放资源
@@ -306,6 +307,46 @@ err = store.Delete(ctx, "user-123") // 删除不存在的会话也会成功
 两个内置会话存储都会自动提供配套的检查点存储。因此使用文件会话时无需额外配置，Agent 或进程重建后仍可恢复 HITL 中断。待处理的中断 ID 可通过 `Agent.PendingInterrupts` 和 `Session.PendingInterrupts` 获取；成功 `Resume` 后会消费检查点，`ClearCheckpoint`、`Reset`、`SetHistory` 和删除会话都会让旧检查点失效。不使用 `Session` 时，也可以通过 `agentkit.NewFileCheckpointStore` 和 `Config.CheckPointStore` 单独启用持久化检查点。
 
 测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`；如需自动提供持久化检查点，可额外实现 `agentkit.CheckpointStoreProvider`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。同一个会话 ID 同一时间应只由一个 Agent 写入；内置存储保证并发安全，但不会擅自合并两段分叉的对话。
+
+### 持久化 Goal 模式
+
+`GoalRunner` 会把一个长期目标拆成多次普通、可提交的 Agent 步骤。每一步结束后，默认由主模型根据完成标准进行判断；若尚未完成，就生成明确的下一步提示并继续，直到完成或达到有界的最大轮次：
+
+```go
+store, err := agentkit.NewFileSessionStore("./data/agent")
+if err != nil {
+    log.Fatal(err)
+}
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+    Name:  "release-agent",
+    Model: chatModel,
+    Session: &agentkit.SessionConfig{
+        ID:    "release-session",
+        Store: store,
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+defer agent.Close()
+
+goals, err := agentkit.NewGoalRunner(agent, nil)
+if err != nil {
+    log.Fatal(err)
+}
+result, err := goals.Start(ctx, agentkit.GoalRequest{
+    ID:              "release-v2",
+    Objective:       "准备并验证 v2 版本发布",
+    SuccessCriteria: "测试通过且发布产物已经就绪",
+})
+```
+
+进程重启后，使用相同目录、Agent 名称和会话 ID 重建文件存储与 Agent，再调用 `goals.Resume(ctx, "release-v2")`。内置会话存储会自动提供配套的 `GoalStore`；自定义判断器或存储可通过 `GoalRunnerConfig` 设置。状态控制使用 `Get`、`Pause` 和 `Clear`；目标进入 HITL 后，通过 `ResumeInterrupt` 提交待处理的中断 ID。
+
+目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
+
+同一个目标 ID 同一时间应只有一个 worker 执行。内置内存和文件存储会保护 goroutine 并拒绝旧版本覆盖，但文件存储定位于本地单进程 worker。分布式部署应实现数据库版 `SessionStore`、`CheckpointStore` 与 `GoalStore`，并在 `Start`/`Resume` 外使用任务系统的租约或抢占机制。`GoalRunner` 不会在宿主进程停止后凭空继续运行；应由 supervisor 拉起 worker 并调用 `Resume`。
 
 ### 自动上下文压缩
 
