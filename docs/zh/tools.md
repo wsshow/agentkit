@@ -66,7 +66,7 @@ ToolPolicy: &agentkit.ToolPolicy{
 ToolReduction: &agentkit.ToolReductionConfig{}
 ```
 
-单个结果超过 50,000 字节时，模型上下文中的内容会被替换为简短预览和不透明结果 ID。AgentKit 会注册安全、只读的 `read_tool_result` 工具，每次最多返回 20,000 个 Unicode 字符，并提供 `next_offset` 继续读取。
+单个结果超过 50,000 字节时，模型上下文中的内容会被替换为简短预览和不透明结果 ID。AgentKit 会注册安全、只读的 `read_tool_result` 工具，每次最多返回 20,000 个 Unicode 字符，并提供 `next_offset` 继续读取。读取器还要求存储结果的 `SessionID` 与当前 Agent 会话完全一致；其他会话的 ID 会返回 `ErrToolResultAccessDenied`。
 
 上下文估算超过 160,000 tokens 时，较旧的工具轮次也会被卸载，最近一轮保持完整。可通过 `MaxResultBytes`、`MaxContextTokens` 和 `KeepRecentToolRounds` 调整。
 
@@ -77,7 +77,7 @@ ToolReduction: &agentkit.ToolReductionConfig{}
 1. reduction 优先使用 `Session` 提供的 `ToolResultStoreProvider`；
 2. 否则回退到并发安全的内存存储。
 
-因此 `NewFileSessionStore` 会让卸载结果自动跨进程重启保留。只有自定义后端才需设置 `Store`。应用可通过 `agent.ToolResultStore()` 管理独立结果的保留周期。内置会话删除会清理会话所属结果；手动保存且 `SessionID` 为空的结果保持独立。
+因此 `NewFileSessionStore` 会让卸载结果自动跨进程重启保留。只有自定义后端才需设置 `Store`。应用可通过 `agent.ToolResultStore()` 直接执行管理型保留操作；这个面向应用的 Store 不会自动限制会话范围。内置会话删除会清理会话所属结果；手动保存且 `SessionID` 为空的结果保持独立，并且只能由未绑定会话的 Agent 通过模型侧读取工具访问。
 
 启用后，结果大小由 reduction 负责，超时、钩子、别名等其他策略仍然生效。它先于完整[上下文压缩](context.md)执行，避免摘要模型无谓消耗。MCP 上限交互详见 [MCP 结果限制](mcp.md#结果与描述限制)。
 

@@ -66,7 +66,7 @@ Enable persistent offloading with a zero-value-safe option:
 ToolReduction: &agentkit.ToolReductionConfig{}
 ```
 
-A single result over 50,000 bytes is replaced in model context with a short preview and opaque result ID. AgentKit registers a safe, read-only `read_tool_result` tool. It returns at most 20,000 Unicode characters per call and supplies `next_offset` for continuation.
+A single result over 50,000 bytes is replaced in model context with a short preview and opaque result ID. AgentKit registers a safe, read-only `read_tool_result` tool. It returns at most 20,000 Unicode characters per call and supplies `next_offset` for continuation. The reader also requires the stored result's `SessionID` to exactly match the current Agent session; an ID from another session returns `ErrToolResultAccessDenied`.
 
 When estimated context exceeds 160,000 tokens, older tool rounds are also offloaded while the most recent round remains intact. Adjust behavior with `MaxResultBytes`, `MaxContextTokens`, and `KeepRecentToolRounds`.
 
@@ -77,7 +77,7 @@ No storage wiring is needed:
 1. reduction uses the `ToolResultStoreProvider` supplied by `Session`; or
 2. it falls back to a concurrency-safe memory store.
 
-`NewFileSessionStore` therefore makes reduced results survive process restarts. Set `Store` only for a custom backend. `agent.ToolResultStore()` gives applications access to standalone results for retention management. Built-in session deletion removes session-owned results; manually saved results with an empty `SessionID` remain independent.
+`NewFileSessionStore` therefore makes reduced results survive process restarts. Set `Store` only for a custom backend. `agent.ToolResultStore()` gives applications direct access for administrative retention work; that application-facing store is not scoped automatically. Built-in session deletion removes session-owned results; manually saved results with an empty `SessionID` remain independent and can only be read by the model-side reader of an Agent without a session.
 
 Reduction owns result sizing while enabled, while timeouts, hooks, aliases, and other policy behavior remain active. It runs before full [context compaction](context.md), avoiding a needless summary-model cost. For MCP-specific limit interaction, see [MCP result limits](mcp.md#result-and-description-limits).
 

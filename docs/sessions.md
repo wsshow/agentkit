@@ -130,7 +130,7 @@ branch, err := manager.Fork(ctx, "conversation-42", agentkit.CreateSessionOption
 })
 ```
 
-Full history and compacted context are copied. Operational state is deliberately not copied: the branch receives its own checkpoint ID and does not inherit pending interrupts, goals, or reduced tool results.
+Full history and compacted context are copied. Operational state is deliberately not copied: the branch receives its own checkpoint ID and does not inherit pending interrupts, goals, or reduced tool results. References to an offloaded result in older copied context remain visible as historical text, but the branch cannot read the source session's result; start a fresh tool call when the complete payload is still needed.
 
 ## Agent Lifecycle and Concurrency
 
