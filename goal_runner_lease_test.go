@@ -43,6 +43,29 @@ type goalStoreWithoutLease struct {
 	store GoalStore
 }
 
+type malformedGoalLeaseStore struct {
+	*MemoryGoalStore
+	acquired *GoalLease
+	renewed  *GoalLease
+}
+
+func (s *malformedGoalLeaseStore) AcquireGoalLease(
+	context.Context,
+	string,
+	string,
+	time.Duration,
+) (*GoalLease, error) {
+	return s.acquired, nil
+}
+
+func (s *malformedGoalLeaseStore) RenewGoalLease(
+	context.Context,
+	*GoalLease,
+	time.Duration,
+) (*GoalLease, error) {
+	return s.renewed, nil
+}
+
 func (s *goalStoreWithoutLease) Load(ctx context.Context, id string) (*Goal, error) {
 	return s.store.Load(ctx, id)
 }
@@ -160,6 +183,69 @@ func TestGoalRunnerRenewsLeaseAndRejectsConcurrentWorker(t *testing.T) {
 	}
 	if _, err := store.Load(context.Background(), "shared-goal"); !errors.Is(err, ErrGoalNotFound) {
 		t.Fatalf("expected cleared goal to be missing, got %v", err)
+	}
+}
+
+func TestGoalRunnerRejectsMalformedAcquiredLease(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name  string
+		lease *GoalLease
+	}{
+		{name: "nil"},
+		{name: "wrong goal", lease: &GoalLease{
+			GoalID: "other", WorkerID: "worker", Token: "token", ExpiresAt: time.Now().Add(time.Minute),
+		}},
+		{name: "wrong worker", lease: &GoalLease{
+			GoalID: "goal", WorkerID: "other", Token: "token", ExpiresAt: time.Now().Add(time.Minute),
+		}},
+		{name: "missing token", lease: &GoalLease{
+			GoalID: "goal", WorkerID: "worker", ExpiresAt: time.Now().Add(time.Minute),
+		}},
+		{name: "expired", lease: &GoalLease{
+			GoalID: "goal", WorkerID: "worker", Token: "token", ExpiresAt: time.Now().Add(-time.Minute),
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &malformedGoalLeaseStore{MemoryGoalStore: NewMemoryGoalStore(), acquired: tt.lease}
+			agent, err := New(ctx, &Config{
+				Name: "worker", Model: NewMockChatModel(),
+				Session: &SessionConfig{ID: "session", Store: NewMemorySessionStore()},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = agent.Close() })
+			runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+				Store: store, WorkerID: "worker", RequireLease: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := runner.Start(ctx, GoalRequest{ID: "goal", Objective: "finish"}); !errors.Is(err, ErrInvalidPersistenceData) {
+				t.Fatalf("Start() error = %v, want ErrInvalidPersistenceData", err)
+			}
+			if _, err := store.Load(ctx, "goal"); !errors.Is(err, ErrGoalNotFound) {
+				t.Fatalf("malformed lease allowed a goal save: %v", err)
+			}
+		})
+	}
+}
+
+func TestRenewGoalLeaseRejectsMalformedBackendData(t *testing.T) {
+	ctx := context.Background()
+	lease := &GoalLease{
+		GoalID: "goal", WorkerID: "worker", Token: "token", ExpiresAt: time.Now().Add(time.Minute),
+	}
+	store := &malformedGoalLeaseStore{
+		MemoryGoalStore: NewMemoryGoalStore(),
+		renewed: &GoalLease{
+			GoalID: "goal", WorkerID: "other", Token: "token", ExpiresAt: lease.ExpiresAt.Add(time.Minute),
+		},
+	}
+	if _, err := renewGoalLease(ctx, store, lease, time.Minute); !errors.Is(err, ErrInvalidPersistenceData) {
+		t.Fatalf("renewGoalLease() error = %v, want ErrInvalidPersistenceData", err)
 	}
 }
 

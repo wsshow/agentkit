@@ -136,9 +136,25 @@ func acquireGoalLease(
 	goalID, workerID string,
 	duration time.Duration,
 ) (*GoalLease, error) {
-	return callPersistence("goal lease acquire", func() (*GoalLease, error) {
+	if err := validateGoalLeaseRequest(ctx, goalID, workerID, duration); err != nil {
+		return nil, err
+	}
+	lease, err := callPersistence("goal lease acquire", func() (*GoalLease, error) {
 		return store.AcquireGoalLease(ctx, goalID, workerID, duration)
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := validateGoalLease(context.TODO(), lease); err != nil {
+		return nil, fmt.Errorf("%w: invalid acquired goal lease: %w", ErrInvalidPersistenceData, err)
+	}
+	if lease.GoalID != goalID || lease.WorkerID != workerID {
+		return nil, fmt.Errorf("%w: acquired goal lease identity does not match the request", ErrInvalidPersistenceData)
+	}
+	if !lease.ExpiresAt.After(time.Now().UTC()) {
+		return nil, fmt.Errorf("%w: acquired goal lease is already expired", ErrInvalidPersistenceData)
+	}
+	return cloneGoalLease(lease), nil
 }
 
 func renewGoalLease(
@@ -147,9 +163,25 @@ func renewGoalLease(
 	lease *GoalLease,
 	duration time.Duration,
 ) (*GoalLease, error) {
-	return callPersistence("goal lease renew", func() (*GoalLease, error) {
+	if err := validateGoalLeaseAndDuration(ctx, lease, duration); err != nil {
+		return nil, err
+	}
+	renewed, err := callPersistence("goal lease renew", func() (*GoalLease, error) {
 		return store.RenewGoalLease(ctx, lease, duration)
 	})
+	if err != nil {
+		return nil, err
+	}
+	if err := validateGoalLease(context.TODO(), renewed); err != nil {
+		return nil, fmt.Errorf("%w: invalid renewed goal lease: %w", ErrInvalidPersistenceData, err)
+	}
+	if renewed.GoalID != lease.GoalID || renewed.WorkerID != lease.WorkerID || renewed.Token != lease.Token {
+		return nil, fmt.Errorf("%w: renewed goal lease identity does not match the current lease", ErrInvalidPersistenceData)
+	}
+	if !renewed.ExpiresAt.After(lease.ExpiresAt) {
+		return nil, fmt.Errorf("%w: renewed goal lease did not extend its expiration", ErrInvalidPersistenceData)
+	}
+	return cloneGoalLease(renewed), nil
 }
 
 func releaseStoredGoalLease(ctx context.Context, store GoalLeaseStore, lease *GoalLease) error {
