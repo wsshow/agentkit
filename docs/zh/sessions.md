@@ -132,6 +132,8 @@ branch, err := manager.Fork(ctx, "conversation-42", agentkit.CreateSessionOption
 
 完整历史和压缩上下文会复制。运行状态不会复制：新分支使用自己的检查点 ID，也不会继承待处理中断、目标或大型工具结果。旧上下文里的卸载结果引用仍会作为历史文本存在，但新分支不能读取源会话的结果；仍需完整载荷时应重新执行相应工具。
 
+源 Agent 正在运行时，`Fork` 会等待当前运行（包括队列中的 follow-up 工作和最终持久化）完全结束后再取快照。等待遵循 `Fork` 的 context；context 到期时不会创建目标会话，因此分支不会从半个工具调用回合开始。
+
 ## Agent 生命周期与并发
 
 ```go
