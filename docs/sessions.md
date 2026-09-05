@@ -48,6 +48,8 @@ agent, created, err := manager.OpenOrCreate(ctx, agentkit.CreateSessionOptions{
 
 If that ID exists, its existing metadata and history win and `created` is false. If it does not exist, the manager persists the new session before initializing its Agent. A model or MCP initialization failure therefore does not lose the conversation record: fix the dependency and call `Open` again.
 
+When separate managers race to `OpenOrCreate` the same explicit ID, the storage CAS chooses one creator. The loser automatically opens the winning record and returns `created=false`; callers do not need to catch `ErrSessionAlreadyExists` for this idempotent path.
+
 Use strict methods when the distinction matters:
 
 ```go

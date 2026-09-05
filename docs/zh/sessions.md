@@ -48,6 +48,8 @@ agent, created, err := manager.OpenOrCreate(ctx, agentkit.CreateSessionOptions{
 
 ID 已存在时，以已有元数据和历史为准，`created` 为 false；不存在时，管理器会先持久化会话，再初始化 Agent。因此即使模型或 MCP 初始化失败，也不会丢失会话记录，修复外部依赖后调用 `Open` 重试即可。
 
+不同管理器同时对同一显式 ID 调用 `OpenOrCreate` 时，由存储 CAS 选出唯一创建方；失败方会自动打开赢家写入的记录并返回 `created=false`。调用方不需要在这条幂等路径上额外捕获 `ErrSessionAlreadyExists`。
+
 需要严格区分创建与打开时使用：
 
 ```go
