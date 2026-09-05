@@ -146,7 +146,7 @@ err = manager.CloseContext(ctx)
 
 `CloseSession` 释放 Agent 和 MCP 资源但保留持久化数据；`Delete` 会先关闭再删除；关闭管理器会关闭全部活动 Agent，但不会删除任何会话。
 
-优先使用 `CloseSession`，这样活动实例表会立即同步更新。直接调用 `agent.Close` 仍然可以工作：下次 `Open` 会识别已关闭实例并创建新的 Agent。
+应用已经持有会话 ID 时优先使用 `CloseSession`，这样能明确表达管理器生命周期。直接调用 `agent.Close` 也安全：Agent 完成清理后会通知管理器立即更新活动实例表，下次 `Open` 会创建新的 Agent。
 
 同一会话的管理操作会串行执行，等待期间会响应 context 取消；不同会话不会互相阻塞。管理器只能防止当前管理器进程内出现重复活动实例，跨管理器或跨进程仍由 `Session.Revision` 阻止陈旧写入静默覆盖。多副本执行还需要在工作分发层基于数据库实现所有权或租约机制。
 
