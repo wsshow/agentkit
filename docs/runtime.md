@@ -155,7 +155,7 @@ wasInterrupted, hasState, state := agentkit.GetInterruptState[MyState](ctx)
 isTarget, hasData, data := agentkit.GetResumeContext[bool](ctx)
 ```
 
-Use `PendingInterrupts` to present outstanding IDs and `ClearCheckpoint` only when the application intentionally abandons them. For restart durability, configure [sessions and checkpoints](persistence.md).
+Use `PendingInterrupts` to present outstanding IDs and `ClearCheckpoint` only when the application intentionally abandons them. Clearing adds an explicit synthetic tool result for every unfinished call before rotating the checkpoint, so later prompts and forks retain a provider-valid conversation instead of an orphaned assistant tool call. For restart durability, configure [sessions and checkpoints](persistence.md).
 
 ## Multimodal Input
 

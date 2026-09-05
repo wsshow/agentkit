@@ -64,7 +64,7 @@ err := agent.SaveSession(ctx)
 
 两个内置会话存储都会自动提供匹配的检查点存储。因此文件会话在 Agent 或进程重建后也能恢复待处理 HITL，不需要额外配置。
 
-待处理 ID 可通过 `Agent.PendingInterrupts` 和 `Session.PendingInterrupts` 获得。成功 `Resume` 后检查点会被消费；`ClearCheckpoint`、`Reset` 和 `SetHistory` 会让已经不匹配对话的检查点失效。
+待处理 ID 可通过 `Agent.PendingInterrupts` 和 `Session.PendingInterrupts` 获得。成功 `Resume` 后检查点会被消费；`ClearCheckpoint` 会先为未完成工具调用持久化合成的放弃结果，再使检查点失效；`Reset` 和 `SetHistory` 则会完整替换受影响的历史。
 
 不使用会话时，可通过 `agentkit.NewFileCheckpointStore` 或自定义实现直接设置 `Config.CheckPointStore`。
 

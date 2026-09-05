@@ -155,7 +155,7 @@ wasInterrupted, hasState, state := agentkit.GetInterruptState[MyState](ctx)
 isTarget, hasData, data := agentkit.GetResumeContext[bool](ctx)
 ```
 
-使用 `PendingInterrupts` 展示待处理 ID；只有应用明确放弃它们时才调用 `ClearCheckpoint`。跨重启恢复需配置[会话与检查点](persistence.md)。
+使用 `PendingInterrupts` 展示待处理 ID；只有应用明确放弃它们时才调用 `ClearCheckpoint`。清除时会先为每个未完成调用加入明确的合成工具结果，再轮换检查点；后续 Prompt 或 Fork 因此会保留提供商可接受的完整对话，而不是一条孤立的 assistant 工具调用。跨重启恢复需配置[会话与检查点](persistence.md)。
 
 ## 多模态输入
 

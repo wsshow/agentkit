@@ -64,7 +64,7 @@ Call `SaveSession` only while the Agent is idle. A concurrent call returns `ErrA
 
 Both built-in session stores automatically provide a matching checkpoint store. A file-backed Agent can therefore resume a pending HITL interrupt after the Agent or process is recreated, without additional wiring.
 
-Pending IDs are available through `Agent.PendingInterrupts` and `Session.PendingInterrupts`. A successful `Resume` consumes the checkpoint. `ClearCheckpoint`, `Reset`, and `SetHistory` invalidate a checkpoint that no longer matches the conversation.
+Pending IDs are available through `Agent.PendingInterrupts` and `Session.PendingInterrupts`. A successful `Resume` consumes the checkpoint. `ClearCheckpoint` persists synthetic abandoned results for unfinished tool calls before invalidating the checkpoint; `Reset` and `SetHistory` replace the affected history entirely.
 
 Without a session, configure `Config.CheckPointStore` directly with `agentkit.NewFileCheckpointStore` or a custom implementation.
 
