@@ -81,6 +81,8 @@ No storage wiring is needed:
 
 `NewFileSessionStore` therefore makes reduced results survive process restarts. Set `Store` only for a custom backend. `agent.ToolResultStore()` gives applications direct access for administrative retention work; that application-facing store is not scoped automatically. Built-in session deletion removes session-owned results; manually saved results with an empty `SessionID` remain independent and can only be read by the model-side reader of an Agent without a session.
 
+Result IDs are exact durable keys and cannot be blank or contain surrounding whitespace. A non-empty owning `SessionID` cannot contain surrounding whitespace either. Built-in and custom-store boundaries enforce these rules so reconnect, access control, and retention cannot disagree about visually identical records.
+
 Reduction owns result sizing while enabled, while timeouts, hooks, aliases, and other policy behavior remain active. It runs before full [context compaction](context.md), avoiding a needless summary-model cost. For MCP-specific limit interaction, see [MCP result limits](mcp.md#result-and-description-limits).
 
 ## On-Demand Tool Search

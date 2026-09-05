@@ -39,7 +39,7 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 })
 ```
 
-`ID` 可选，省略时 AgentKit 会生成 UUID。默认判断器使用主模型检查成功标准；未完成时会生成具体的继续提示并开始下一步，直到配置的迭代上限。
+`ID` 可选，省略时 AgentKit 会生成 UUID。显式 ID 是精确的持久化键：不得为空，也不得带首尾空白；所属会话 ID 遵循同一规则。默认判断器使用主模型检查成功标准；未完成时会生成具体的继续提示并开始下一步，直到配置的迭代上限。
 
 如果 Agent 会话已经存在待处理的 HITL 检查点，`Start` 会在创建目标前返回 `ErrResumeRequired`。应先恢复或清除原检查点；AgentKit 不会把无关中断挂到新目标上。
 

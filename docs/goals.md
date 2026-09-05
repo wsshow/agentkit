@@ -39,7 +39,7 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 })
 ```
 
-`ID` is optional; AgentKit generates a UUID when it is omitted. The evaluator uses the primary model to decide whether the criteria are met. If not, it creates a concrete continuation prompt and starts the next step, up to the configured iteration limit.
+`ID` is optional; AgentKit generates a UUID when it is omitted. A supplied ID is an exact durable key: it must be non-blank and cannot contain surrounding whitespace. The owning session ID follows the same rule. The evaluator uses the primary model to decide whether the criteria are met. If not, it creates a concrete continuation prompt and starts the next step, up to the configured iteration limit.
 
 If the Agent session already has a pending HITL checkpoint, `Start` returns `ErrResumeRequired` before creating the goal. Resume or clear that existing checkpoint first; AgentKit will not attach an unrelated interrupt to a new goal.
 

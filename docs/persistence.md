@@ -80,7 +80,7 @@ For a database, implement `SessionStore`. A custom store may also implement:
 
 Custom persistence methods must honor their non-nil context and return promptly after it is canceled. `Config.PersistenceTimeout` defaults to `DefaultPersistenceTimeout` (30 seconds) for internal cleanup after cancellation. Increase it only when the backend legitimately needs more time.
 
-Every successful `Load` must return a non-nil object whose ID exactly matches the requested ID. Goal snapshots must also contain a valid status, session ID, objective, and positive iteration limit. `List` results must carry valid IDs, lifecycle values, counts or sizes, and timestamps without duplicate entries. AgentKit validates these boundaries and returns `ErrInvalidPersistenceData` for malformed backend output instead of risking a panic, cross-record restore, or unsafe retention delete. Loaded and listed data is copied before AgentKit uses it, so a backend may safely retain its own cache objects.
+Every successful `Load` must return a non-nil object whose ID exactly matches the requested ID. Session, goal, and tool-result IDs are exact keys and cannot contain surrounding whitespace; owning session IDs follow the same rule. Goal snapshots must also contain a valid status, session ID, objective, and positive iteration limit. `List` results must carry valid IDs, lifecycle values, counts or sizes, and timestamps without duplicate entries. AgentKit validates these boundaries and returns `ErrInvalidPersistenceData` for malformed backend output instead of risking a panic, cross-record restore, or unsafe retention delete. Loaded and listed data is copied before AgentKit uses it, so a backend may safely retain its own cache objects.
 
 ## Concurrent Writers
 

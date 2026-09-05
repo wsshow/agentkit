@@ -81,6 +81,8 @@ ToolReduction: &agentkit.ToolReductionConfig{}
 
 因此 `NewFileSessionStore` 会让卸载结果自动跨进程重启保留。只有自定义后端才需设置 `Store`。应用可通过 `agent.ToolResultStore()` 直接执行管理型保留操作；这个面向应用的 Store 不会自动限制会话范围。内置会话删除会清理会话所属结果；手动保存且 `SessionID` 为空的结果保持独立，并且只能由未绑定会话的 Agent 通过模型侧读取工具访问。
 
+结果 ID 是精确的持久化键，不得为空或带首尾空白。非空的所属 `SessionID` 同样不得带首尾空白。内置存储和自定义存储边界都会执行这些规则，避免重连、访问控制与保留清理把视觉上相同的记录当成不同对象。
+
 启用后，结果大小由 reduction 负责，超时、钩子、别名等其他策略仍然生效。它先于完整[上下文压缩](context.md)执行，避免摘要模型无谓消耗。MCP 上限交互详见 [MCP 结果限制](mcp.md#结果与描述限制)。
 
 ## 按需工具搜索
