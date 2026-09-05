@@ -29,6 +29,8 @@ Set the token threshold below the provider's hard context window. Leave room for
 - `agent.ContextHistory()` returns the compacted messages actually sent to the model.
 - With `Session` configured, both views are persisted. A restarted Agent does not accidentally send the full unabridged history back to the model.
 
+`Config.SystemPrompt` is injected for each model run and is not copied into the persisted compact context. This prevents the same instruction from accumulating after repeated compaction or session restores. Explicit system messages supplied as conversation history remain part of that history.
+
 `SetHistory` replaces the full history and synchronizes the display state. If the change must survive a restart, call `SaveSession` afterward.
 
 ## Failure and Observability
