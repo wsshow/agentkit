@@ -23,8 +23,12 @@ const (
 	DefaultMCPInitializationTimeout = 30 * time.Second
 )
 
-// ErrMCPClosePanic 表示 MCP 会话在关闭时发生 panic。
-var ErrMCPClosePanic = errors.New("agentkit: MCP session close panicked")
+var (
+	// ErrMCPInitializationPanic 表示 MCP 会话在初始工具发现时发生 panic。
+	ErrMCPInitializationPanic = errors.New("agentkit: MCP initialization panicked")
+	// ErrMCPClosePanic 表示 MCP 会话在关闭时发生 panic。
+	ErrMCPClosePanic = errors.New("agentkit: MCP session close panicked")
+)
 
 // MCPTransport 表示 MCP 服务器传输方式。
 type MCPTransport string
@@ -259,7 +263,7 @@ func connectMCP(ctx context.Context, cfg *MCPConfig) ([]Tool, []managedMCPConnec
 				return officialmcp.ToolNameMapperOutput{ExposedName: prefix + input.Tool.Name}, nil
 			}
 		}
-		serverTools, err := officialmcp.GetTools(serverCtx, toolConfig)
+		serverTools, err := getMCPTools(serverCtx, toolConfig)
 		if err != nil {
 			cancelServer()
 			return fail(fmt.Errorf("agentkit: load tools from MCP server %q: %w", server.Name, err))
@@ -276,6 +280,16 @@ func connectMCP(ctx context.Context, cfg *MCPConfig) ([]Tool, []managedMCPConnec
 		tools = append(tools, serverTools...)
 	}
 	return tools, connections, nil
+}
+
+func getMCPTools(ctx context.Context, cfg *officialmcp.Config) (tools []Tool, err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			tools = nil
+			err = fmt.Errorf("%w: %v", ErrMCPInitializationPanic, value)
+		}
+	}()
+	return officialmcp.GetTools(ctx, cfg)
 }
 
 func validateMCPTools(ctx context.Context, server MCPServerConfig, tools []Tool) error {

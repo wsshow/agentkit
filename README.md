@@ -23,7 +23,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **Durable goal runs** — Persist an objective, evaluate completion after each step, and resume safely after cancellation or restart
 - **Automatic context compaction** — Summarize contexts over token or message limits while preserving full conversation history
 - **On-demand skills** — Load reusable `SKILL.md` instructions from local directories or a custom backend
-- **Managed MCP connections** — Connect stdio, SSE, and Streamable HTTP servers with discovery, reconnection, filtering, and panic-isolated cleanup
+- **Managed MCP connections** — Connect stdio, SSE, and Streamable HTTP servers with bounded, panic-isolated discovery, filtering, reconnection, and cleanup
 - **On-demand tool discovery** — Keep large tool catalogs out of model context until the model searches for what it needs
 - **Recoverable large tool outputs** — Move oversized results out of context, persist them, and let the model read bounded chunks on demand
 - **Guarded tool integration** — Plug in any Eino-compatible tool with result-size limits, optional timeouts, panic isolation, audit hooks, and automatic tool-call handling

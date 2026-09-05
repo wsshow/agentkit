@@ -125,6 +125,18 @@ func TestConnectMCPClosesEverySessionAfterPartialFailure(t *testing.T) {
 	}
 }
 
+func TestConnectMCPIsolatesToolDiscoveryPanicAndClosesSession(t *testing.T) {
+	session := &panickingListMCPClientSession{fakeMCPClientSession: newFakeMCPClientSession("tool")}
+	cfg := &MCPConfig{Servers: []MCPServerConfig{{Name: "broken", Session: session}}}
+	_, _, err := connectMCP(context.Background(), cfg)
+	if !errors.Is(err, ErrMCPInitializationPanic) {
+		t.Fatalf("connectMCP() error = %v, want ErrMCPInitializationPanic", err)
+	}
+	if got := session.closeCount(); got != 1 {
+		t.Fatalf("close count = %d, want 1", got)
+	}
+}
+
 func TestConnectMCPBoundsToolDiscovery(t *testing.T) {
 	session := newFakeMCPClientSession("tool")
 	session.listWait = make(chan struct{})
@@ -414,6 +426,14 @@ type panickingMCPClientSession struct {
 
 func (s *panickingMCPClientSession) Close() error {
 	panic("broken close")
+}
+
+type panickingListMCPClientSession struct {
+	*fakeMCPClientSession
+}
+
+func (s *panickingListMCPClientSession) ListTools(context.Context, *protocol.ListToolsParams) (*protocol.ListToolsResult, error) {
+	panic("broken list tools")
 }
 
 func (s *blockingMCPClientSession) Close() error {
