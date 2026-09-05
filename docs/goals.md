@@ -128,6 +128,8 @@ Built-in goal stores implement `GoalLeaseStore`. `GoalRunner` automatically:
 
 A concurrent worker receives `ErrGoalLeaseHeld`. Use `errors.As` with `GoalLeaseHeldError` to inspect its owner and expiration. A worker that loses ownership is canceled and receives `ErrGoalLeaseLost`. After a crashed worker's lease expires, a replacement can call `Resume` and follow the same recovery rules.
 
+Custom lease backends must return a non-nil lease with the requested goal and worker IDs, a non-blank fencing token, and a future expiration. Renewals must preserve that identity and extend the expiration. AgentKit validates and copies these snapshots; malformed backend data returns `ErrInvalidPersistenceData` and never falls back to an unfenced save.
+
 The default lease lasts one minute and renews approximately every 20 seconds. Set `WorkerID` and `LeaseDuration` through `GoalRunnerConfig`. Production code using a custom store can set `RequireLease: true` so a legacy store cannot silently fall back to single-worker behavior.
 
 ## What “Long-Running” Does and Does Not Mean

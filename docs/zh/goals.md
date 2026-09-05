@@ -128,6 +128,8 @@ if ok {
 
 并发 worker 会收到 `ErrGoalLeaseHeld`，可用 `errors.As` 读取 `GoalLeaseHeldError` 中的持有者与到期时间。丢失所有权的 worker 会被取消并收到 `ErrGoalLeaseLost`。崩溃 worker 的租约到期后，替代 worker 可调用 `Resume` 并沿用相同恢复规则。
 
+自定义租约后端必须返回非 nil 租约，其中目标和 worker ID 与请求一致、fencing token 非空且到期时间仍在未来；续租必须保持身份不变并延长到期时间。AgentKit 会校验并复制这些快照；畸形后端数据返回 `ErrInvalidPersistenceData`，绝不会退化成无 fencing 的普通保存。
+
 默认租约为一分钟，约每 20 秒续期。可通过 `GoalRunnerConfig` 设置 `WorkerID` 和 `LeaseDuration`。生产环境使用自定义存储时可设置 `RequireLease: true`，避免旧存储静默退化为单 worker 行为。
 
 ## “长任务”的准确含义
