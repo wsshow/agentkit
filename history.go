@@ -30,6 +30,13 @@ func (a *Agent) restoreHistory(history, contextHistory []*schema.Message, compac
 
 func (a *Agent) replaceContextHistory(history []*schema.Message) {
 	a.mu.Lock()
+	// Eino prepends the effective Agent instruction as a system message for the
+	// current run. Middleware state therefore contains one message that is not
+	// part of AgentKit's stored context. Persisting it would prepend the same
+	// instruction again on every later run and after every session restore.
+	if a.runtimeSystemMessage && len(history) > 0 && history[0] != nil && history[0].Role == schema.System {
+		history = history[1:]
+	}
 	a.contextHistory = cloneHistoryMessages(history)
 	a.contextCompacted = true
 	a.mu.Unlock()

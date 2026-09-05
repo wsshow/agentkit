@@ -12,6 +12,13 @@ type agentLifecycleHandler struct {
 	agent *Agent
 }
 
+func (h *agentLifecycleHandler) BeforeAgent(ctx context.Context, runCtx *adk.ChatModelAgentContext) (context.Context, *adk.ChatModelAgentContext, error) {
+	h.agent.mu.Lock()
+	h.agent.runtimeSystemMessage = runCtx != nil && runCtx.Instruction != ""
+	h.agent.mu.Unlock()
+	return ctx, runCtx, nil
+}
+
 func (h *agentLifecycleHandler) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
 	h.agent.beginTurn(h.agent.name)
 	return ctx, state, nil

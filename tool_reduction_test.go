@@ -88,9 +88,10 @@ func TestToolReductionPersistsClearedContext(t *testing.T) {
 		MockModelText("done"),
 	)
 	agent, err := New(ctx, &Config{
-		Name:  "assistant",
-		Model: model,
-		Tools: MockTools(firstTool, secondTool),
+		Name:         "assistant",
+		SystemPrompt: "always be precise",
+		Model:        model,
+		Tools:        MockTools(firstTool, secondTool),
 		Session: &SessionConfig{
 			ID: "session", Store: sessions,
 		},
@@ -137,6 +138,9 @@ func TestToolReductionPersistsClearedContext(t *testing.T) {
 	}
 	if got := toolMessageContent(contextHistory, "second-call"); got != "second payload" {
 		t.Fatalf("recent tool round was not retained: %q", got)
+	}
+	if got := countMessageRole(contextHistory, schema.System); got != 0 {
+		t.Fatalf("stored context contains %d runtime system messages", got)
 	}
 	session := agent.Session()
 	if session == nil || session.Context == nil || !strings.Contains(toolMessageContent(session.Context, "first-call"), ToolResultReadToolName) {

@@ -137,6 +137,7 @@ type Agent struct {
 	toolBatchDone            chan struct{}
 	toolBatchDoneFlag        bool
 	compactionMessagesBefore int
+	runtimeSystemMessage     bool
 	pendingInterrupts        []InterruptPoint
 	runInterrupted           bool
 	knownToolNames           map[string]struct{}

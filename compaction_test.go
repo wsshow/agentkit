@@ -56,8 +56,9 @@ func TestAgentCompactionPreservesFullSessionAndRestoresCompactContext(t *testing
 	}))
 
 	agent, err := New(ctx, &Config{
-		Name:  "assistant",
-		Model: primaryModel,
+		Name:         "assistant",
+		SystemPrompt: "always be precise",
+		Model:        primaryModel,
 		Session: &SessionConfig{
 			ID:    "compaction-session",
 			Store: store,
@@ -90,11 +91,14 @@ func TestAgentCompactionPreservesFullSessionAndRestoresCompactContext(t *testing
 	}
 	start := events.Last(EventCompactionStart)
 	end := events.Last(EventCompactionEnd)
-	if start == nil || start.Compaction == nil || start.Compaction.MessagesBefore != 5 {
+	if start == nil || start.Compaction == nil || start.Compaction.MessagesBefore != 6 {
 		t.Fatalf("compaction start = %#v", start)
 	}
-	if end == nil || end.Compaction == nil || end.Compaction.MessagesBefore != 5 || end.Compaction.MessagesAfter != 2 {
+	if end == nil || end.Compaction == nil || end.Compaction.MessagesBefore != 6 || end.Compaction.MessagesAfter != 3 {
 		t.Fatalf("compaction end = %#v", end)
+	}
+	if got := countMessageRole(contextHistory, schema.System); got != 0 {
+		t.Fatalf("stored context contains %d runtime system messages", got)
 	}
 
 	persisted, err := store.Load(ctx, "compaction-session")
@@ -113,11 +117,15 @@ func TestAgentCompactionPreservesFullSessionAndRestoresCompactContext(t *testing
 		if slices.Contains(contents, "old question one") {
 			return fmt.Errorf("restored model received full history instead of compact context: %v", contents)
 		}
+		if got := countMessageRole(call.Input, schema.System); got != 1 {
+			return fmt.Errorf("restored model received %d system messages, want 1", got)
+		}
 		return nil
 	}))
 	restored, err := New(ctx, &Config{
-		Name:  "assistant",
-		Model: restoredModel,
+		Name:         "assistant",
+		SystemPrompt: "always be precise",
+		Model:        restoredModel,
 		Session: &SessionConfig{
 			ID:    "compaction-session",
 			Store: store,
@@ -328,4 +336,14 @@ func containsSubstring(values []string, substring string) bool {
 		}
 	}
 	return false
+}
+
+func countMessageRole(messages []*schema.Message, role schema.RoleType) int {
+	count := 0
+	for _, message := range messages {
+		if message != nil && message.Role == role {
+			count++
+		}
+	}
+	return count
 }
