@@ -18,7 +18,9 @@ func TestMemoryGoalStoreCopiesAndListsGoals(t *testing.T) {
 	}
 	second := &Goal{
 		ID: "second", SessionID: "session-2", Objective: "verify",
-		Status: GoalStatusPaused, MaxIterations: 20, Iteration: 3, UpdatedAt: newer,
+		Status: GoalStatusPaused, MaxIterations: 20, Iteration: 3, AttemptIteration: 4,
+		InProgress: true, AwaitingInterrupt: true, PendingEvaluation: true,
+		LastReason: "waiting", LastError: "interrupted", UpdatedAt: newer,
 	}
 	if err := store.Save(ctx, first); err != nil {
 		t.Fatalf("save first goal: %v", err)
@@ -48,7 +50,10 @@ func TestMemoryGoalStoreCopiesAndListsGoals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list goals: %v", err)
 	}
-	if len(infos) != 2 || infos[0].ID != "second" || infos[0].Iteration != 3 {
+	if len(infos) != 2 || infos[0].ID != "second" || infos[0].Objective != "verify" ||
+		infos[0].Iteration != 3 || infos[0].MaxIterations != 20 || infos[0].AttemptIteration != 4 ||
+		!infos[0].InProgress || !infos[0].AwaitingInterrupt || !infos[0].PendingEvaluation ||
+		infos[0].LastReason != "waiting" || infos[0].LastError != "interrupted" {
 		t.Fatalf("unexpected goal list: %#v", infos)
 	}
 	if err := store.Delete(ctx, "missing"); err != nil {

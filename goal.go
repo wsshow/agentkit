@@ -54,12 +54,20 @@ type Goal struct {
 
 // GoalInfo 是用于目标列表展示的轻量元数据。
 type GoalInfo struct {
-	ID        string     `json:"id"`
-	SessionID string     `json:"session_id"`
-	Status    GoalStatus `json:"status"`
-	Iteration int        `json:"iteration"`
-	Revision  uint64     `json:"revision"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID                string     `json:"id"`
+	SessionID         string     `json:"session_id"`
+	Objective         string     `json:"objective"`
+	Status            GoalStatus `json:"status"`
+	Iteration         int        `json:"iteration"`
+	MaxIterations     int        `json:"max_iterations"`
+	AttemptIteration  int        `json:"attempt_iteration,omitempty"`
+	InProgress        bool       `json:"in_progress,omitempty"`
+	AwaitingInterrupt bool       `json:"awaiting_interrupt,omitempty"`
+	PendingEvaluation bool       `json:"pending_evaluation,omitempty"`
+	LastReason        string     `json:"last_reason,omitempty"`
+	LastError         string     `json:"last_error,omitempty"`
+	Revision          uint64     `json:"revision"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // GoalStore 管理持久化目标。
@@ -248,12 +256,20 @@ func cloneGoal(goal *Goal) *Goal {
 
 func goalInfo(goal *Goal) GoalInfo {
 	return GoalInfo{
-		ID:        goal.ID,
-		SessionID: goal.SessionID,
-		Status:    goal.Status,
-		Iteration: goal.Iteration,
-		Revision:  goal.Revision,
-		UpdatedAt: goal.UpdatedAt,
+		ID:                goal.ID,
+		SessionID:         goal.SessionID,
+		Objective:         goal.Objective,
+		Status:            goal.Status,
+		Iteration:         goal.Iteration,
+		MaxIterations:     goal.MaxIterations,
+		AttemptIteration:  goal.AttemptIteration,
+		InProgress:        goal.InProgress,
+		AwaitingInterrupt: goal.AwaitingInterrupt,
+		PendingEvaluation: goal.PendingEvaluation,
+		LastReason:        goal.LastReason,
+		LastError:         goal.LastError,
+		Revision:          goal.Revision,
+		UpdatedAt:         goal.UpdatedAt,
 	}
 }
 
