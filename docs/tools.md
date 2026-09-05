@@ -4,6 +4,8 @@
 
 AgentKit accepts Eino-compatible tools directly and adds a single policy layer for dispatch, safety, observability, large results, and large catalogs. The common path requires no custom Eino `ToolsNode` or middleware wiring.
 
+Every model-facing tool name is validated during `agentkit.New`: names must be at most 128 bytes and contain only ASCII letters, digits, `_`, `-`, or `.`. Invalid local, MCP, and generated Skill tool names therefore fail before any model request.
+
 ## Tool Policy
 
 ```go

@@ -47,6 +47,8 @@ Each `Paths` entry may be:
 
 Files are read again on every list or load operation, so edits take effect without rebuilding the Agent. Duplicate names, malformed frontmatter, empty instructions, and files larger than 1 MiB fail with explicit errors.
 
+If `ToolName` is customized, use only ASCII letters, digits, `_`, `-`, or `.`, with at most 128 bytes. AgentKit validates the generated tool name during construction so an invalid provider-facing name never waits until the first model request to fail.
+
 ## Custom Storage
 
 Use `Backend` instead of `Paths` for a database, remote service, or programmatically assembled catalog:

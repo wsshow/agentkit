@@ -47,6 +47,8 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 每次列出或加载时都会重新读取文件，因此修改后无需重建 Agent。名称重复、frontmatter 错误、指令为空或文件超过 1 MiB 时都会返回明确错误。
 
+自定义 `ToolName` 时只能使用 ASCII 字母、数字、`_`、`-` 或 `.`，且最多 128 字节。AgentKit 会在构造阶段校验这个生成工具名，不会等到第一次模型请求时才暴露提供商无法接受的名称。
+
 ## 自定义存储
 
 数据库、远程服务或程序动态构建的目录可用 `Backend` 代替 `Paths`：
