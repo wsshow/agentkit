@@ -313,6 +313,18 @@ err = store.Delete(ctx, "user-123") // 删除不存在的会话也会成功
 
 它们也会提供不可变的 `ToolResultStore`，用于保存不应长期留在模型上下文里的完整工具结果。压缩会自动记录 `SessionID`；手动保存且 `SessionID` 为空的结果保持独立，不会随会话删除。不使用会话时可直接创建 `agentkit.NewMemoryToolResultStore` 或 `agentkit.NewFileToolResultStore`；自定义会话后端可额外实现 `agentkit.ToolResultStoreProvider`。
 
+长期运行的服务可通过一次显式调用执行保留期清扫（通常由应用自己的调度器触发）：
+
+```go
+report, err := agentkit.PruneResources(ctx, store, agentkit.RetentionPolicy{
+    SessionIdleTime:       30 * 24 * time.Hour,
+    CompletedGoalAge:      7 * 24 * time.Hour,
+    DetachedToolResultAge: 24 * time.Hour,
+})
+```
+
+零值策略不会删除任何数据。清扫绝不会删除 active、paused 或 blocked 目标，也不会让仍可能被会话引用的工具结果按时间过期。调用闲置会话清扫前，应先停止可能命中这些会话的 worker。返回报告只统计直接删除的条目，不会重复计算会话删除时级联清掉的资源。
+
 测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`；如需自动提供持久化检查点，可额外实现 `agentkit.CheckpointStoreProvider`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。内置存储使用 `Session.Revision` 做乐观并发控制：两个 Agent 从同一版本恢复时，陈旧写入会返回 `ErrSessionConflict`，不会静默覆盖较新的历史。自定义存储也应提供相同的 compare-and-swap 语义；分叉对话不会被擅自合并。
 
 ### 持久化 Goal 模式

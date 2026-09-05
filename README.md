@@ -313,6 +313,18 @@ Both built-in session stores automatically provide a matching checkpoint store. 
 
 They also provide an immutable `ToolResultStore` for complete tool outputs that should live outside the model context. Reduction automatically records `SessionID`; results saved manually with an empty `SessionID` remain independent and are not deleted with a session. Use `agentkit.NewMemoryToolResultStore` or `agentkit.NewFileToolResultStore` directly when no session is configured; custom session backends can implement `agentkit.ToolResultStoreProvider`.
 
+Long-running services can perform explicit retention in one call (typically from their own scheduler):
+
+```go
+report, err := agentkit.PruneResources(ctx, store, agentkit.RetentionPolicy{
+    SessionIdleTime:       30 * 24 * time.Hour,
+    CompletedGoalAge:      7 * 24 * time.Hour,
+    DetachedToolResultAge: 24 * time.Hour,
+})
+```
+
+The zero policy deletes nothing. Pruning never deletes active, paused, or blocked goals, and it never ages out a session-owned tool result while that session may still reference it. Stop workers for sessions eligible for idle-session deletion before calling it. The returned report counts directly deleted entries; resources cascaded by session deletion are not counted twice.
+
 Use `agentkit.NewMemorySessionStore()` for tests and single-process services. Implement `agentkit.SessionStore` for a database backend; it may additionally implement `agentkit.CheckpointStoreProvider` to supply durable checkpoints automatically. `History` and `Session` cannot be configured together, so the restore source is always unambiguous. Built-in stores use `Session.Revision` for optimistic concurrency control: when two Agents restore the same version, the stale writer receives `ErrSessionConflict` instead of silently replacing newer history. Custom stores should provide the same compare-and-swap behavior; divergent conversations are intentionally not merged automatically.
 
 ### Durable Goal Runs
