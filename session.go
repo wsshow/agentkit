@@ -20,6 +20,8 @@ var (
 	ErrSessionConflict = errors.New("agentkit: session revision conflict")
 	// ErrSessionDisabled 表示 Agent 未配置会话存储。
 	ErrSessionDisabled = errors.New("agentkit: session persistence is not configured")
+	// ErrSessionArchived 表示会话已经归档，不能再创建运行实例。
+	ErrSessionArchived = errors.New("agentkit: session is archived")
 )
 
 // SessionConfig 配置 Agent 的自动会话恢复与持久化。
@@ -28,8 +30,17 @@ type SessionConfig struct {
 	Store SessionStore // 会话存储
 }
 
+// SessionMetadata 是用于组织和检索会话的应用级元数据。
+// OwnerID 可表示用户、租户或应用自己的隔离命名空间。
+type SessionMetadata struct {
+	Title   string   `json:"title,omitempty"`
+	OwnerID string   `json:"owner_id,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+}
+
 // Session 是可持久化的完整对话快照。
 type Session struct {
+	SessionMetadata
 	ID                string            `json:"id"`
 	CreatedAt         time.Time         `json:"created_at"`
 	UpdatedAt         time.Time         `json:"updated_at"`
@@ -37,17 +48,20 @@ type Session struct {
 	Context           []*schema.Message `json:"context,omitempty"`            // 压缩后的模型上下文；nil 表示与 Messages 相同
 	CheckpointID      string            `json:"checkpoint_id,omitempty"`      // 当前可恢复执行的检查点标识
 	PendingInterrupts []InterruptPoint  `json:"pending_interrupts,omitempty"` // 等待 Resume 的中断点
+	Archived          bool              `json:"archived,omitempty"`           // 归档后不可再运行，但仍可查询和恢复
 	Revision          uint64            `json:"revision"`                     // 乐观并发控制版本
 }
 
 // SessionInfo 是用于会话列表展示的轻量元数据。
 type SessionInfo struct {
+	SessionMetadata
 	ID                    string    `json:"id"`
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
 	MessageCount          int       `json:"message_count"`
 	ContextMessageCount   int       `json:"context_message_count"`
 	PendingInterruptCount int       `json:"pending_interrupt_count"`
+	Archived              bool      `json:"archived,omitempty"`
 	Revision              uint64    `json:"revision"`
 }
 
@@ -246,7 +260,13 @@ func cloneSession(session *Session) *Session {
 	cloned.Messages = cloneHistoryMessages(session.Messages)
 	cloned.Context = cloneHistoryMessages(session.Context)
 	cloned.PendingInterrupts = cloneInterruptPoints(session.PendingInterrupts)
+	cloned.Tags = append([]string(nil), session.Tags...)
 	return &cloned
+}
+
+func cloneSessionMetadata(metadata SessionMetadata) SessionMetadata {
+	metadata.Tags = append([]string(nil), metadata.Tags...)
+	return metadata
 }
 
 func normalizedSession(session *Session) *Session {
@@ -267,12 +287,18 @@ func sessionInfo(session *Session) SessionInfo {
 		contextCount = len(session.Messages)
 	}
 	return SessionInfo{
+		SessionMetadata: SessionMetadata{
+			Title:   session.Title,
+			OwnerID: session.OwnerID,
+			Tags:    append([]string(nil), session.Tags...),
+		},
 		ID:                    session.ID,
 		CreatedAt:             session.CreatedAt,
 		UpdatedAt:             session.UpdatedAt,
 		MessageCount:          len(session.Messages),
 		ContextMessageCount:   contextCount,
 		PendingInterruptCount: len(session.PendingInterrupts),
+		Archived:              session.Archived,
 		Revision:              session.Revision,
 	}
 }

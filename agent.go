@@ -143,6 +143,8 @@ type Agent struct {
 
 	sessionStore     SessionStore
 	sessionID        string
+	sessionMetadata  SessionMetadata
+	sessionArchived  bool
 	sessionCreatedAt time.Time
 	sessionUpdatedAt time.Time
 	sessionRevision  uint64
@@ -179,6 +181,9 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 			loadedSession = &Session{ID: cfg.Session.ID, CreatedAt: now, UpdatedAt: now}
 		} else if err != nil {
 			return nil, fmt.Errorf("agentkit: load session %q: %w", cfg.Session.ID, err)
+		}
+		if loadedSession.Archived {
+			return nil, fmt.Errorf("%w: %s", ErrSessionArchived, cfg.Session.ID)
 		}
 		history = loadedSession.Messages
 		if loadedSession.Context != nil {
@@ -229,6 +234,8 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	if loadedSession != nil {
 		a.sessionStore = cfg.Session.Store
 		a.sessionID = loadedSession.ID
+		a.sessionMetadata = cloneSessionMetadata(loadedSession.SessionMetadata)
+		a.sessionArchived = loadedSession.Archived
 		a.sessionCreatedAt = loadedSession.CreatedAt
 		a.sessionUpdatedAt = loadedSession.UpdatedAt
 		a.sessionRevision = loadedSession.Revision
@@ -800,6 +807,7 @@ func (a *Agent) Session() *Session {
 		return nil
 	}
 	return &Session{
+		SessionMetadata:   cloneSessionMetadata(a.sessionMetadata),
 		ID:                a.sessionID,
 		CreatedAt:         a.sessionCreatedAt,
 		UpdatedAt:         a.sessionUpdatedAt,
@@ -807,6 +815,7 @@ func (a *Agent) Session() *Session {
 		Context:           a.sessionContextLocked(),
 		CheckpointID:      a.checkPointID,
 		PendingInterrupts: cloneInterruptPoints(a.pendingInterrupts),
+		Archived:          a.sessionArchived,
 		Revision:          a.sessionRevision,
 	}
 }
@@ -819,6 +828,10 @@ func (a *Agent) ToolResultStore() ToolResultStore {
 // SaveSession 立即保存当前会话快照。
 // Prompt、Send、Continue 和 Resume 结束时会自动调用它。
 func (a *Agent) SaveSession(ctx context.Context) error {
+	return a.saveSession(ctx, nil)
+}
+
+func (a *Agent) saveSession(ctx context.Context, metadata *SessionMetadata) error {
 	if ctx == nil {
 		return errors.New("agentkit: context is required")
 	}
@@ -838,7 +851,12 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 	if createdAt.IsZero() {
 		createdAt = now
 	}
+	effectiveMetadata := cloneSessionMetadata(a.sessionMetadata)
+	if metadata != nil {
+		effectiveMetadata = cloneSessionMetadata(*metadata)
+	}
 	session := &Session{
+		SessionMetadata:   effectiveMetadata,
 		ID:                a.sessionID,
 		CreatedAt:         createdAt,
 		UpdatedAt:         now,
@@ -846,6 +864,7 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 		Context:           a.sessionContextLocked(),
 		CheckpointID:      a.checkPointID,
 		PendingInterrupts: cloneInterruptPoints(a.pendingInterrupts),
+		Archived:          a.sessionArchived,
 		Revision:          a.sessionRevision,
 	}
 	store := a.sessionStore
@@ -858,6 +877,7 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 	a.mu.Lock()
 	a.sessionCreatedAt = createdAt
 	a.sessionUpdatedAt = now
+	a.sessionMetadata = effectiveMetadata
 	a.sessionRevision = session.Revision + 1
 	a.mu.Unlock()
 	return nil
