@@ -90,6 +90,7 @@ type Config struct {
 	Skills              *SkillsConfig              // 按需加载 SKILL.md（可选）
 	MCP                 *MCPConfig                 // 自动连接并管理 MCP 服务器（可选）
 	ToolSearch          *ToolSearchConfig          // 大型工具集按需搜索（可选）
+	ToolReduction       *ToolReductionConfig       // 大型工具结果持久化卸载与按需回取（可选）
 }
 
 // Agent 提供事件流驱动的交互能力。
@@ -101,6 +102,7 @@ type Agent struct {
 	emtr            *emitter
 	checkPointID    string // 每个 Agent 实例唯一的 CheckPoint ID
 	checkpointStore CheckpointStore
+	toolResultStore ToolResultStore
 
 	mu       sync.Mutex
 	cancelFn context.CancelFunc
@@ -207,7 +209,17 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		a.pendingInterrupts = cloneInterruptPoints(loadedSession.PendingInterrupts)
 	}
 
-	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+5)
+	var reductionMiddleware ChatModelAgentMiddleware
+	var resultReader Tool
+	if cfg.ToolReduction != nil {
+		var err error
+		reductionMiddleware, resultReader, a.toolResultStore, err = newToolReduction(ctx, a, cfg.ToolReduction, cfg.Session)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+6)
 	handlers = append(handlers, cfg.Handlers...)
 	if cfg.ToolSearch != nil {
 		middleware, err := newToolSearchMiddleware(ctx, cfg.ToolSearch)
@@ -228,6 +240,9 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		}
 		handlers = append(handlers, middleware)
 	}
+	if reductionMiddleware != nil {
+		handlers = append(handlers, reductionMiddleware)
+	}
 	if cfg.Compaction != nil {
 		middleware, err := newCompactionMiddleware(ctx, a, cfg.Model, cfg.Compaction)
 		if err != nil {
@@ -241,9 +256,12 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	})
 
 	tools := append([]Tool(nil), cfg.Tools...)
+	if resultReader != nil {
+		tools = append(tools, resultReader)
+	}
 	var mcpConnections []managedMCPConnection
 	if cfg.MCP != nil {
-		mcpTools, connections, err := connectMCP(ctx, cfg.MCP)
+		mcpTools, connections, err := connectMCP(ctx, mcpConfigForReduction(cfg.MCP, cfg.ToolReduction != nil))
 		if err != nil {
 			return nil, err
 		}
@@ -277,9 +295,10 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		ModelFailoverConfig: cfg.ModelFailoverConfig,
 	}
 
-	if len(tools) > 0 || cfg.ToolPolicy != nil || cfg.Skills != nil || cfg.ToolSearch != nil {
+	effectiveToolPolicy := toolPolicyForReduction(cfg.ToolPolicy, cfg.ToolReduction != nil)
+	if len(tools) > 0 || effectiveToolPolicy != nil || cfg.Skills != nil || cfg.ToolSearch != nil {
 		agentCfg.ToolsConfig = adk.ToolsConfig{
-			ToolsNodeConfig: cfg.ToolPolicy.toolsNodeConfig(tools),
+			ToolsNodeConfig: effectiveToolPolicy.toolsNodeConfig(tools),
 		}
 	}
 
@@ -344,6 +363,9 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 		return err
 	}
 	if err := validateToolSearchConfig(cfg.ToolSearch); err != nil {
+		return err
+	}
+	if err := validateToolReductionConfig(cfg.ToolReduction); err != nil {
 		return err
 	}
 	return nil
@@ -678,6 +700,11 @@ func (a *Agent) Session() *Session {
 		CheckpointID:      a.checkPointID,
 		PendingInterrupts: cloneInterruptPoints(a.pendingInterrupts),
 	}
+}
+
+// ToolResultStore 返回工具结果压缩使用的存储；未启用 ToolReduction 时返回 nil。
+func (a *Agent) ToolResultStore() ToolResultStore {
+	return a.toolResultStore
 }
 
 // SaveSession 立即保存当前会话快照。

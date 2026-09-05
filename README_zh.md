@@ -24,6 +24,7 @@
 - **按需技能** — 从本地目录或自定义后端加载可复用的 `SKILL.md` 指令
 - **MCP 连接管理** — 连接 stdio、SSE、Streamable HTTP 服务器，自动发现、重连、筛选并释放资源
 - **按需工具发现** — 大型工具目录不会一次性塞入模型上下文，模型搜索后才加载所需工具
+- **可恢复的大型工具结果** — 将超大结果移出上下文并持久化，模型需要时再分段回取
 - **受保护的工具集成** — 接入任何 Eino 兼容工具，内置结果大小限制、可选超时、审计钩子和自动调用处理
 - **类型别名** — 直接使用 `agentkit.ChatModel`、`agentkit.Tool`、`agentkit.ToolCall` 等，无需直接导入 eino 包
 
@@ -165,6 +166,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
         MaxTokens: 80_000,
         KeepRecentTurns: 2,
     },
+    ToolReduction: &agentkit.ToolReductionConfig{},       // 持久化并回取大型工具结果（可选）
     Skills: &agentkit.SkillsConfig{                       // 按需加载 SKILL.md（可选）
         Paths: []string{"./skills"},
     },
@@ -569,9 +571,23 @@ ToolPolicy: &agentkit.ToolPolicy{
 }
 ```
 
-`New` 会根据全部本地、Skill 和 MCP 工具校验别名，别名冲突或引用不存在的正式工具都会立即失败。所有文本工具结果默认最多保留 `DefaultToolResultMaxChars`（100,000 个 Unicode 字符），截断时会附加提示标记；将 `MaxResultChars` 设为 `-1` 可关闭限制。`Timeout` 使用 `context` 协作取消，因此自定义工具应在 `ctx.Done()` 关闭后及时停止。`BeforeTool` 可通过返回错误拒绝调用，`AfterTool` 会收到耗时、错误、保留文本大小和截断信息。工具默认并行执行，因此钩子必须并发安全。这些保护统一覆盖普通、流式及多模态工具。高级拦截场景仍可通过 `Middlewares` 传入 `agentkit.ToolMiddleware`。
+`New` 会根据全部本地、Skill 和 MCP 工具校验别名，别名冲突或引用不存在的正式工具都会立即失败。所有文本工具结果默认最多保留 `DefaultToolResultMaxChars`（100,000 个 Unicode 字符），截断时会附加提示标记；将 `MaxResultChars` 设为 `-1` 可关闭限制。启用 `ToolReduction` 后，它会安全接管这项有损限长，确保超大结果先完整持久化。`Timeout` 使用 `context` 协作取消，因此自定义工具应在 `ctx.Done()` 关闭后及时停止。`BeforeTool` 可通过返回错误拒绝调用，`AfterTool` 会收到耗时、错误、保留文本大小和截断信息。工具默认并行执行，因此钩子必须并发安全。这些保护统一覆盖普通、流式及多模态工具。高级拦截场景仍可通过 `Middlewares` 传入 `agentkit.ToolMiddleware`。
 
 AgentKit 还会在每次模型请求前自动修复没有配对结果的工具调用。该能力默认开启，取消或中断的工具批次不会再留下被 OpenAI 兼容接口拒绝的历史格式。
+
+### 大型工具结果压缩
+
+只需一个零值安全的配置即可启用持久化卸载：
+
+```go
+ToolReduction: &agentkit.ToolReductionConfig{}
+```
+
+单个结果超过 50,000 字节时，会被替换为简短预览和一个不透明结果 ID。AgentKit 会自动注册安全、只读的 `read_tool_result` 工具，每次最多返回 20,000 个 Unicode 字符，并通过 `next_offset` 指示下一段位置。上下文估算超过 160,000 tokens 时，较旧的工具轮次也会被卸载，最近一轮仍保持完整。可通过 `MaxResultBytes`、`MaxContextTokens` 和 `KeepRecentToolRounds` 调整这些默认值。
+
+用户无需额外接线：压缩会优先复用 `Session` 提供的 `ToolResultStoreProvider`，否则自动使用并发安全的内存存储。因此配合 `NewFileSessionStore` 时，卸载结果会自动跨进程重启保留；只有自定义后端才需要设置 `Store`。应用可通过 `agent.ToolResultStore()` 按自己的保留策略列出或删除结果。
+
+启用后由 reduction 统一负责结果大小控制，`ToolPolicy` 的超时、钩子、别名等其他能力仍然生效。对于 MCP 工具，AgentKit 会关闭其默认结果上限，让完整输出进入 reduction；若用户显式设置了正数 `MCPConfig.MaxResultChars`，该上限会被保留，超出部分会按用户意图丢弃。reduction 会先于完整上下文摘要执行，避免摘要模型先吞入大块旧工具结果。
 
 ### 按需工具搜索
 
@@ -587,7 +603,7 @@ ToolSearch: &agentkit.ToolSearchConfig{
 }
 ```
 
-对于动态目录，模型起初只看到 `tool_search` 元工具；普通 `Tools` 仍然可见。搜索命中后模型才会看到对应动态工具，它们仍统一经过 `ToolPolicy` 的超时、大小限制、钩子、别名和中间件。小型工具集应继续直接使用 `Tools`；工具搜索会多一次决策，只在工具 schema 已明显占用上下文时才值得启用。仅当模型提供商支持原生工具搜索协议时设置 `UseModelNative: true`。启用后 `tool_search` 为保留名称。
+对于动态目录，模型起初只看到 `tool_search` 元工具；普通 `Tools` 仍然可见。搜索命中后模型才会看到对应动态工具，它们仍统一经过 `ToolPolicy` 的超时、结果处理、钩子、别名和中间件。小型工具集应继续直接使用 `Tools`；工具搜索会多一次决策，只在工具 schema 已明显占用上下文时才值得启用。仅当模型提供商支持原生工具搜索协议时设置 `UseModelNative: true`。启用后 `tool_search` 为保留名称。
 
 ### 转向与后续消息
 

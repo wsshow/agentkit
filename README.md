@@ -24,6 +24,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **On-demand skills** — Load reusable `SKILL.md` instructions from local directories or a custom backend
 - **Managed MCP connections** — Connect stdio, SSE, and Streamable HTTP servers with discovery, reconnection, filtering, and cleanup
 - **On-demand tool discovery** — Keep large tool catalogs out of model context until the model searches for what it needs
+- **Recoverable large tool outputs** — Move oversized results out of context, persist them, and let the model read bounded chunks on demand
 - **Guarded tool integration** — Plug in any Eino-compatible tool with result-size limits, optional timeouts, audit hooks, and automatic tool-call handling
 - **Type aliases** — Use `agentkit.ChatModel`, `agentkit.Tool`, `agentkit.ToolCall`, etc. without importing eino packages directly
 
@@ -165,6 +166,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
         MaxTokens: 80_000,
         KeepRecentTurns: 2,
     },
+    ToolReduction: &agentkit.ToolReductionConfig{},       // persist/read large tool outputs (optional)
     Skills: &agentkit.SkillsConfig{                       // on-demand SKILL.md loading (optional)
         Paths: []string{"./skills"},
     },
@@ -569,9 +571,23 @@ ToolPolicy: &agentkit.ToolPolicy{
 }
 ```
 
-Aliases are validated against all local, skill, and MCP tool names during `New`; collisions and references to missing canonical tools fail immediately. Every text tool result is limited to `DefaultToolResultMaxChars` (100,000 Unicode characters) by default and receives a truncation marker when cut. Set `MaxResultChars` to `-1` to disable the limit. `Timeout` uses cooperative context cancellation, so custom tools should stop promptly when `ctx.Done()` is closed. `BeforeTool` may reject a call by returning an error, while `AfterTool` receives duration, error, retained text size, and truncation metadata. Hooks must be concurrency-safe because tools run in parallel by default. The same protections cover normal, streaming, and multimodal tools. `Middlewares` accepts `agentkit.ToolMiddleware` for advanced interception.
+Aliases are validated against all local, skill, and MCP tool names during `New`; collisions and references to missing canonical tools fail immediately. Every text tool result is limited to `DefaultToolResultMaxChars` (100,000 Unicode characters) by default and receives a truncation marker when cut. Set `MaxResultChars` to `-1` to disable the limit. When `ToolReduction` is enabled, it safely supersedes this destructive limit so complete oversized results can be persisted instead. `Timeout` uses cooperative context cancellation, so custom tools should stop promptly when `ctx.Done()` is closed. `BeforeTool` may reject a call by returning an error, while `AfterTool` receives duration, error, retained text size, and truncation metadata. Hooks must be concurrency-safe because tools run in parallel by default. The same protections cover normal, streaming, and multimodal tools. `Middlewares` accepts `agentkit.ToolMiddleware` for advanced interception.
 
 AgentKit also repairs dangling tool calls before every model request. This is enabled automatically so a canceled or interrupted tool batch cannot leave history in a shape rejected by OpenAI-compatible APIs.
+
+### Large Tool Result Reduction
+
+Enable persistent offloading with one zero-value-safe option:
+
+```go
+ToolReduction: &agentkit.ToolReductionConfig{}
+```
+
+A single result over 50,000 bytes is replaced with a short preview and an opaque result ID. AgentKit automatically registers the safe, read-only `read_tool_result` tool, which returns at most 20,000 Unicode characters per call and provides `next_offset` for continuation. When estimated context exceeds 160,000 tokens, older tool rounds are offloaded too while the most recent round remains intact. These defaults can be adjusted with `MaxResultBytes`, `MaxContextTokens`, and `KeepRecentToolRounds`.
+
+No storage wiring is required: reduction reuses a `ToolResultStoreProvider` from `Session`, or falls back to a concurrent memory store. `NewFileSessionStore` therefore makes reduced results survive process restarts automatically. Set `Store` only for a custom backend. Use `agent.ToolResultStore()` to list or delete retained results according to the application's retention policy.
+
+Reduction owns result sizing while enabled, but all other `ToolPolicy` behavior remains active. For MCP tools, AgentKit disables the default MCP result cap so the complete output reaches reduction; an explicitly configured positive `MCPConfig.MaxResultChars` is preserved and therefore intentionally discards anything beyond that limit. Reduction runs before full context compaction, avoiding the cost of sending old bulky tool payloads to the summarizer.
 
 ### On-Demand Tool Search
 
@@ -587,7 +603,7 @@ ToolSearch: &agentkit.ToolSearchConfig{
 }
 ```
 
-For the dynamic catalog, the model initially sees only the `tool_search` meta-tool; regular `Tools` remain visible. Matching tools become visible after a search and still pass through the same `ToolPolicy` timeouts, limits, hooks, aliases, and middleware. Small tool sets should stay in `Tools`; search adds an extra decision and is valuable only when tool schemas would otherwise consume meaningful context. Set `UseModelNative: true` only for a model/provider that implements native tool search. The name `tool_search` is reserved while this feature is enabled.
+For the dynamic catalog, the model initially sees only the `tool_search` meta-tool; regular `Tools` remain visible. Matching tools become visible after a search and still pass through the same `ToolPolicy` timeouts, result handling, hooks, aliases, and middleware. Small tool sets should stay in `Tools`; search adds an extra decision and is valuable only when tool schemas would otherwise consume meaningful context. Set `UseModelNative: true` only for a model/provider that implements native tool search. The name `tool_search` is reserved while this feature is enabled.
 
 ### Steering & Follow-Up
 

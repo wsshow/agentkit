@@ -27,7 +27,7 @@ type StoredToolResult struct {
 // ToolResultInfo 是用于结果清理和监控的轻量元数据。
 type ToolResultInfo struct {
 	ID        string    `json:"id"`
-	Size      int       `json:"size"`
+	Size      int       `json:"size"` // Content 的字节数
 	CreatedAt time.Time `json:"created_at"`
 }
 
