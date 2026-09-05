@@ -1,9 +1,14 @@
 package agentkit
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 	"sync"
 )
+
+// ErrSubscriberPanic 表示事件订阅回调发生 panic；其他订阅者会通过 EventError 收到该错误。
+var ErrSubscriberPanic = errors.New("agentkit: event subscriber panicked")
 
 // EventType 事件类型
 type EventType string
@@ -100,9 +105,36 @@ func (e *emitter) Emit(event Event) {
 	}
 	e.mu.RUnlock()
 
-	for _, fn := range subs {
-		fn(cloneEvent(event))
+	failed := make(map[int]struct{})
+	var panicErrs []error
+	for index, fn := range subs {
+		if err := invokeSubscriber(fn, event); err != nil {
+			failed[index] = struct{}{}
+			panicErrs = append(panicErrs, err)
+		}
 	}
+	if len(panicErrs) == 0 {
+		return
+	}
+	diagnostic := Event{
+		Type: EventError, Agent: event.Agent, Error: errors.Join(panicErrs...),
+	}
+	for index, fn := range subs {
+		if _, panicked := failed[index]; panicked {
+			continue
+		}
+		_ = invokeSubscriber(fn, diagnostic)
+	}
+}
+
+func invokeSubscriber(fn Subscriber, event Event) (err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			err = fmt.Errorf("%w: %v", ErrSubscriberPanic, value)
+		}
+	}()
+	fn(cloneEvent(event))
+	return nil
 }
 
 func cloneEvent(event Event) Event {

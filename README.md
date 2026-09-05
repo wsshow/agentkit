@@ -97,7 +97,7 @@ for event := range stream.Events() {
 result, err := stream.Wait()
 ```
 
-The stream reserves the Agent before returning, supports `Cancel`, `Done`, `Wait`, and `Close`, and isolates execution from slow event consumers with an internal queue. Use `StreamParts` for multimodal input. Global `Subscribe` remains available for logging and application-wide observers.
+The stream reserves the Agent before returning, supports `Cancel`, `Done`, `Wait`, and `Close`, and isolates execution from slow event consumers with an internal queue. Use `StreamParts` for multimodal input. Global `Subscribe` remains available for logging and application-wide observers. Global callbacks run synchronously and should return quickly; a callback panic is isolated, while the remaining subscribers receive an `EventError` wrapping `ErrSubscriberPanic`.
 
 ## Event Types
 

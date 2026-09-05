@@ -97,7 +97,7 @@ for event := range stream.Events() {
 result, err := stream.Wait()
 ```
 
-`Stream` 会在返回前占用 Agent，提供 `Cancel`、`Done`、`Wait`、`Close`，并通过内部队列隔离慢事件消费者，避免阻塞 Agent 执行。多模态输入使用 `StreamParts`。全局 `Subscribe` 仍适合日志和应用级观察器。
+`Stream` 会在返回前占用 Agent，提供 `Cancel`、`Done`、`Wait`、`Close`，并通过内部队列隔离慢事件消费者，避免阻塞 Agent 执行。多模态输入使用 `StreamParts`。全局 `Subscribe` 仍适合日志和应用级观察器；全局回调会同步执行，因此应尽快返回。单个回调发生 panic 时会被隔离，其余订阅者会收到包装 `ErrSubscriberPanic` 的 `EventError`。
 
 ## 事件类型
 
