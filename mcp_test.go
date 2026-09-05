@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	einotool "github.com/cloudwego/eino/components/tool"
@@ -269,6 +270,47 @@ func TestAgentCloseReturnsMCPErrorOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestAgentCloseContextBoundsMCPShutdown(t *testing.T) {
+	session := &blockingMCPClientSession{
+		fakeMCPClientSession: newFakeMCPClientSession("tool"),
+		started:              make(chan struct{}),
+		release:              make(chan struct{}),
+	}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(session.release) }) }
+	defer release()
+	agent, err := New(context.Background(), &Config{
+		Model: NewMockChatModel(),
+		MCP:   &MCPConfig{Servers: []MCPServerConfig{{Name: "remote", Session: session}}},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	err = agent.CloseContext(closeCtx)
+	cancelClose()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext() error = %v, want context.DeadlineExceeded", err)
+	}
+	select {
+	case <-session.started:
+	default:
+		t.Fatal("MCP close did not start")
+	}
+	if err := agent.Prompt(context.Background(), "closed"); !errors.Is(err, ErrAgentClosed) {
+		t.Fatalf("Prompt() error = %v, want ErrAgentClosed", err)
+	}
+
+	release()
+	if err := agent.CloseContext(context.Background()); err != nil {
+		t.Fatalf("second CloseContext() error = %v", err)
+	}
+	if got := session.closeCount(); got != 1 {
+		t.Fatalf("MCP close count = %d, want 1", got)
+	}
+}
+
 type fakeMCPClientSession struct {
 	mu          sync.Mutex
 	pages       map[string]*protocol.ListToolsResult
@@ -279,6 +321,19 @@ type fakeMCPClientSession struct {
 	calledTools []string
 	closes      int
 	closeErr    error
+}
+
+type blockingMCPClientSession struct {
+	*fakeMCPClientSession
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingMCPClientSession) Close() error {
+	s.once.Do(func() { close(s.started) })
+	<-s.release
+	return s.fakeMCPClientSession.Close()
 }
 
 func newFakeMCPClientSession(names ...string) *fakeMCPClientSession {

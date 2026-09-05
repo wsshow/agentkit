@@ -261,11 +261,14 @@ state := agent.State()
 
 // Close agent and release resources (implements io.Closer)
 agent.Close()
+
+// Or bound both run shutdown and MCP cleanup
+err = agent.CloseContext(shutdownCtx)
 ```
 
 > `Prompt`, `Send`, `Continue`, and `Resume` are mutually exclusive. Use `errors.Is(err, agentkit.ErrAgentRunning)` to detect a concurrent run. After a HITL interrupt, start with `Resume`; fresh runs return `agentkit.ErrResumeRequired` until the checkpoint is resumed or cleared, preventing an unfinished tool action from being silently abandoned.
 
-`AbortContext` always sends cancellation first, then bounds only the wait. If a custom model or tool ignores its context, the method may return the shutdown context error while that code is still unwinding; the Agent remains reserved until the run actually exits.
+`AbortContext` always sends cancellation first, then bounds only the wait. If a custom model or tool ignores its context, the method may return the shutdown context error while that code is still unwinding; the Agent remains reserved until the run actually exits. `CloseContext` additionally prevents new runs immediately and continues the one-time MCP cleanup in the background after a waiting deadline expires.
 
 ### Request-Scoped Configuration
 

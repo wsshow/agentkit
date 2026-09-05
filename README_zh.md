@@ -261,11 +261,14 @@ state := agent.State()
 
 // 关闭 Agent，释放资源（实现 io.Closer 接口）
 agent.Close()
+
+// 或同时限制运行退出和 MCP 清理的等待时间
+err = agent.CloseContext(shutdownCtx)
 ```
 
 > `Prompt`、`Send`、`Continue`、`Resume` 互斥执行。可通过 `errors.Is(err, agentkit.ErrAgentRunning)` 判断并发执行错误。发生 HITL 中断后应先调用 `Resume`；在检查点被恢复或清理前，新执行会返回 `agentkit.ErrResumeRequired`，避免未完成的工具操作被悄悄丢弃。
 
-`AbortContext` 总会先发出取消请求，再限制等待时间。如果自定义模型或工具忽略 context，该方法可能在返回停机 context 错误时，底层代码仍在退出过程中；Agent 会保持占用状态，直到本次运行真正结束。
+`AbortContext` 总会先发出取消请求，再限制等待时间。如果自定义模型或工具忽略 context，该方法可能在返回停机 context 错误时，底层代码仍在退出过程中；Agent 会保持占用状态，直到本次运行真正结束。`CloseContext` 还会立即禁止新运行，并在等待截止后继续于后台完成仅一次的 MCP 清理。
 
 ### 请求级配置
 

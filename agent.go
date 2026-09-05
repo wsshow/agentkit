@@ -138,8 +138,10 @@ type Agent struct {
 	sessionSaveMu    sync.Mutex
 
 	mcpConnections []managedMCPConnection
-	mcpCloseOnce   sync.Once
-	mcpCloseErr    error
+	closeMu        sync.Mutex
+	closeStarted   bool
+	closeDone      chan struct{}
+	closeErr       error
 }
 
 type toolCallInfo struct {
@@ -679,14 +681,50 @@ func (a *Agent) AbortContext(ctx context.Context) error {
 
 // Close 关闭 Agent，释放资源。实现 io.Closer 接口。
 func (a *Agent) Close() error {
-	a.mu.Lock()
-	a.closed = true
-	a.mu.Unlock()
-	a.Abort()
-	a.mcpCloseOnce.Do(func() {
-		a.mcpCloseErr = closeMCPConnections(a.mcpConnections)
-	})
-	return a.mcpCloseErr
+	return a.CloseContext(context.Background())
+}
+
+// CloseContext 关闭 Agent，并等待当前执行和 MCP 连接释放完成或 ctx 结束。
+// 超时后关闭仍会在后台继续；重复调用只会等待同一次 MCP 关闭。
+func (a *Agent) CloseContext(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("agentkit: context is required")
+	}
+	done := a.startClose()
+	select {
+	case <-done:
+		a.closeMu.Lock()
+		defer a.closeMu.Unlock()
+		return a.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (a *Agent) startClose() <-chan struct{} {
+	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
+	if !a.closeStarted {
+		a.closeStarted = true
+		a.closeDone = make(chan struct{})
+		a.mu.Lock()
+		a.closed = true
+		cancel := a.cancelFn
+		a.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		connections := append([]managedMCPConnection(nil), a.mcpConnections...)
+		go func() {
+			a.Abort()
+			err := closeMCPConnections(connections)
+			a.closeMu.Lock()
+			a.closeErr = err
+			close(a.closeDone)
+			a.closeMu.Unlock()
+		}()
+	}
+	return a.closeDone
 }
 
 // State 获取当前状态

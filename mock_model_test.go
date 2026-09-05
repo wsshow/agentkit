@@ -1083,6 +1083,49 @@ func TestAgentAbortContextBoundsNonCooperativeRun(t *testing.T) {
 	}
 }
 
+func TestAgentCloseContextContinuesShutdownAfterTimeout(t *testing.T) {
+	agent, err := New(context.Background(), &Config{
+		Name:  "assistant",
+		Model: NewMockChatModel(MockModelText("unused")),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	agent.Subscribe(func(event Event) {
+		if event.Type == EventAgentStart {
+			close(started)
+			<-release
+		}
+	})
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- agent.Prompt(context.Background(), "close me")
+	}()
+	<-started
+
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	err = agent.CloseContext(closeCtx)
+	cancelClose()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CloseContext() error = %v, want context.DeadlineExceeded", err)
+	}
+	close(release)
+	if err := agent.Close(); err != nil {
+		t.Fatalf("Close() after timeout error = %v", err)
+	}
+	select {
+	case err := <-runDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Prompt() error = %v, want context.Canceled", err)
+		}
+	default:
+		t.Fatal("background shutdown did not finish the active run")
+	}
+}
+
 func TestAgentRunningRejectsConcurrentPrompt(t *testing.T) {
 	ctx := context.Background()
 	started := make(chan struct{})
