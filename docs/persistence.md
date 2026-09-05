@@ -40,6 +40,8 @@ Deleting a missing session succeeds. Built-in deletion also removes the session'
 
 The file store hashes IDs into safe filenames and uses synced temporary files, atomic replacement, and synced directory metadata. This prevents path traversal through a session ID and avoids exposing a half-written snapshot after a crash.
 
+Legacy version-1 files that predate session timestamps remain readable. When either timestamp is absent, the file store uses the file's modification time as a stable fallback, so directory ordering and cursor pagination remain valid; the next save persists normal timestamps and the current revision.
+
 ## Manual State Changes
 
 ```go
