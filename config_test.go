@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -41,6 +42,15 @@ func TestNewValidatesConfig(t *testing.T) {
 				MaxIterations: -1,
 			},
 			want: "max iterations must not be negative",
+		},
+		{
+			name: "negative persistence timeout",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:              NewMockChatModel(),
+				PersistenceTimeout: -time.Second,
+			},
+			want: "persistence timeout must not be negative",
 		},
 		{
 			name: "empty session ID",

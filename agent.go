@@ -84,6 +84,7 @@ type Config struct {
 	ModelRetryConfig    *ModelRetryConfig          // 模型调用重试配置（可选）
 	ModelFailoverConfig *ModelFailoverConfig       // 模型失败转移配置（可选）
 	MaxIterations       int                        // 默认 20
+	PersistenceTimeout  time.Duration              // 取消后的内部持久化收尾超时；默认 30 秒
 	CheckPointStore     compose.CheckPointStore    // 自定义 CheckPoint 存储；默认使用 Session 配套存储或内存存储
 	Session             *SessionConfig             // 自动恢复并保存完整对话（可选）
 	Compaction          *CompactionConfig          // 自动上下文压缩（可选）
@@ -95,16 +96,17 @@ type Config struct {
 
 // Agent 提供事件流驱动的交互能力。
 type Agent struct {
-	name            string
-	model           ChatModel
-	modelRetry      *ModelRetryConfig
-	modelFailover   *ModelFailoverConfig
-	runner          *adk.Runner
-	state           *State
-	emtr            *emitter
-	checkPointID    string // 每个 Agent 实例唯一的 CheckPoint ID
-	checkpointStore CheckpointStore
-	toolResultStore ToolResultStore
+	name               string
+	model              ChatModel
+	modelRetry         *ModelRetryConfig
+	modelFailover      *ModelFailoverConfig
+	runner             *adk.Runner
+	state              *State
+	emtr               *emitter
+	checkPointID       string // 每个 Agent 实例唯一的 CheckPoint ID
+	checkpointStore    CheckpointStore
+	toolResultStore    ToolResultStore
+	persistenceTimeout time.Duration
 
 	mu       sync.Mutex
 	cancelFn context.CancelFunc
@@ -177,6 +179,10 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	if maxIter == 0 {
 		maxIter = 20
 	}
+	persistenceTimeout := cfg.PersistenceTimeout
+	if persistenceTimeout == 0 {
+		persistenceTimeout = DefaultPersistenceTimeout
+	}
 
 	desc := cfg.Description
 	if desc == "" {
@@ -192,16 +198,17 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 
 	a := &Agent{
-		name:          cfg.Name,
-		model:         cfg.Model,
-		modelRetry:    cfg.ModelRetryConfig,
-		modelFailover: cfg.ModelFailoverConfig,
-		state:         newState(),
-		emtr:          newEmitter(),
-		checkPointID:  checkPointID,
-		steeringMode:  QueueModeOneAtATime,
-		followUpMode:  QueueModeOneAtATime,
-		toolCalls:     make(map[string]toolCallInfo),
+		name:               cfg.Name,
+		model:              cfg.Model,
+		modelRetry:         cfg.ModelRetryConfig,
+		modelFailover:      cfg.ModelFailoverConfig,
+		state:              newState(),
+		emtr:               newEmitter(),
+		checkPointID:       checkPointID,
+		persistenceTimeout: persistenceTimeout,
+		steeringMode:       QueueModeOneAtATime,
+		followUpMode:       QueueModeOneAtATime,
+		toolCalls:          make(map[string]toolCallInfo),
 	}
 	if loadedSession != nil {
 		a.sessionStore = cfg.Session.Store
@@ -347,6 +354,9 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 	}
 	if cfg.MaxIterations < 0 {
 		return fmt.Errorf("agentkit: max iterations must not be negative: %d", cfg.MaxIterations)
+	}
+	if cfg.PersistenceTimeout < 0 {
+		return fmt.Errorf("agentkit: persistence timeout must not be negative: %s", cfg.PersistenceTimeout)
 	}
 	if cfg.Session != nil {
 		if cfg.Session.ID == "" {
@@ -764,7 +774,9 @@ func (a *Agent) SaveSession(ctx context.Context) error {
 // SetHistory 替换完整对话历史，并同步展示状态。
 func (a *Agent) SetHistory(history []*schema.Message) {
 	a.Abort()
-	_ = a.discardCheckpoint(context.Background())
+	ctx, cancel := a.persistenceContext(context.Background())
+	_ = a.discardCheckpoint(ctx)
+	cancel()
 	a.replaceHistory(history)
 }
 
@@ -772,7 +784,9 @@ func (a *Agent) SetHistory(history []*schema.Message) {
 // 如果 Agent 正在执行，先等待执行完成。
 func (a *Agent) Reset() {
 	a.Abort()
-	_ = a.discardCheckpoint(context.Background())
+	ctx, cancel := a.persistenceContext(context.Background())
+	_ = a.discardCheckpoint(ctx)
+	cancel()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.state.Clear()

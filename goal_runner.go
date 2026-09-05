@@ -324,7 +324,7 @@ func (r *GoalRunner) Resume(ctx context.Context, id string) (out *GoalRunResult,
 		goal.AwaitingInterrupt = true
 		goal.Status = GoalStatusPaused
 		goal.LastReason = "waiting for human input"
-		if err := r.save(context.WithoutCancel(runCtx), goal); err != nil {
+		if err := r.saveDetached(runCtx, goal); err != nil {
 			return &GoalRunResult{Goal: goal}, err
 		}
 		return &GoalRunResult{Goal: cloneGoal(goal)}, ErrGoalInterruptRequired
@@ -368,10 +368,10 @@ func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map
 	}
 	result, runErr := r.agent.ResumeWithResult(runCtx, targets)
 	if runErr != nil {
-		r.recordRunError(context.WithoutCancel(runCtx), goal, runErr)
+		r.recordRunError(runCtx, goal, runErr)
 		return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, runErr
 	}
-	if err := r.finishAttempt(context.WithoutCancel(runCtx), goal, result); err != nil {
+	if err := r.finishAttempt(runCtx, goal, result); err != nil {
 		return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, err
 	}
 	return r.drive(runCtx, goal, result)
@@ -572,7 +572,7 @@ func (r *GoalRunner) begin(ctx context.Context, id string) (context.Context, fun
 
 func (r *GoalRunner) drive(ctx context.Context, goal *Goal, lastRun *RunResult) (*GoalRunResult, error) {
 	for {
-		latest, err := r.loadForAgent(context.WithoutCancel(ctx), goal.ID)
+		latest, err := r.loadForAgentDetached(ctx, goal.ID)
 		if err != nil {
 			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, err
 		}
@@ -588,12 +588,12 @@ func (r *GoalRunner) drive(ctx context.Context, goal *Goal, lastRun *RunResult) 
 		}
 		if goal.AwaitingInterrupt {
 			goal.Status = GoalStatusPaused
-			_ = r.save(context.WithoutCancel(ctx), goal)
+			_ = r.saveDetached(ctx, goal)
 			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, ErrGoalInterruptRequired
 		}
 		if goal.PendingEvaluation {
 			if err := r.evaluate(ctx, goal); err != nil {
-				r.recordRunError(context.WithoutCancel(ctx), goal, err)
+				r.recordRunError(ctx, goal, err)
 				return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, err
 			}
 			continue
@@ -611,7 +611,7 @@ func (r *GoalRunner) drive(ctx context.Context, goal *Goal, lastRun *RunResult) 
 		if goal.Iteration >= goal.MaxIterations {
 			goal.Status = GoalStatusBlocked
 			goal.LastReason = fmt.Sprintf("maximum goal iterations reached: %d", goal.MaxIterations)
-			if err := r.save(context.WithoutCancel(ctx), goal); err != nil {
+			if err := r.saveDetached(ctx, goal); err != nil {
 				return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, err
 			}
 			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: lastRun}, fmt.Errorf("%w: %s", ErrGoalBlocked, goal.LastReason)
@@ -628,18 +628,20 @@ func (r *GoalRunner) drive(ctx context.Context, goal *Goal, lastRun *RunResult) 
 		}
 		result, runErr := r.agent.Ask(ctx, prompt)
 		if runErr != nil {
-			r.recordRunError(context.WithoutCancel(ctx), goal, runErr)
+			r.recordRunError(ctx, goal, runErr)
 			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, runErr
 		}
 		lastRun = result
-		if err := r.finishAttempt(context.WithoutCancel(ctx), goal, result); err != nil {
+		if err := r.finishAttempt(ctx, goal, result); err != nil {
 			return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, err
 		}
 	}
 }
 
 func (r *GoalRunner) finishAttempt(ctx context.Context, goal *Goal, result *RunResult) error {
-	latest, err := r.loadForAgent(ctx, goal.ID)
+	persistCtx, cancel := r.persistenceContext(ctx)
+	defer cancel()
+	latest, err := r.loadForAgent(persistCtx, goal.ID)
 	if err != nil {
 		return err
 	}
@@ -662,7 +664,7 @@ func (r *GoalRunner) finishAttempt(ctx context.Context, goal *Goal, result *RunR
 		goal.AwaitingInterrupt = false
 		goal.PendingEvaluation = true
 	}
-	return r.save(ctx, goal)
+	return r.save(persistCtx, goal)
 }
 
 func (r *GoalRunner) evaluate(ctx context.Context, goal *Goal) error {
@@ -673,7 +675,9 @@ func (r *GoalRunner) evaluate(ctx context.Context, goal *Goal) error {
 	if err != nil {
 		return err
 	}
-	latest, err := r.loadForAgent(context.WithoutCancel(ctx), goal.ID)
+	persistCtx, cancel := r.persistenceContext(ctx)
+	defer cancel()
+	latest, err := r.loadForAgent(persistCtx, goal.ID)
 	if err != nil {
 		return err
 	}
@@ -690,22 +694,22 @@ func (r *GoalRunner) evaluate(ctx context.Context, goal *Goal) error {
 	} else if goal.Status != GoalStatusPaused {
 		goal.Status = GoalStatusActive
 	}
-	return r.save(context.WithoutCancel(ctx), goal)
+	return r.save(persistCtx, goal)
 }
 
 func (r *GoalRunner) recoverAttempt(ctx context.Context, goal *Goal) (*RunResult, error) {
 	history := r.agent.History()
 	if len(history) < goal.HistoryMessageCount {
-		return nil, r.blockRecovery(context.WithoutCancel(ctx), goal, "agent session is older than the recorded goal attempt")
+		return nil, r.blockRecovery(ctx, goal, "agent session is older than the recorded goal attempt")
 	}
 	newMessages := history[goal.HistoryMessageCount:]
 	if len(newMessages) == 0 {
-		return nil, r.blockRecovery(context.WithoutCancel(ctx), goal, "the previous process exited before session progress was saved")
+		return nil, r.blockRecovery(ctx, goal, "the previous process exited before session progress was saved")
 	}
 	last := newMessages[len(newMessages)-1]
 	if last != nil && last.Role == schema.Assistant && len(last.ToolCalls) == 0 {
 		result := runResultFromRecoveredMessages(newMessages)
-		if err := r.finishAttempt(context.WithoutCancel(ctx), goal, result); err != nil {
+		if err := r.finishAttempt(ctx, goal, result); err != nil {
 			return nil, err
 		}
 		return result, nil
@@ -713,34 +717,50 @@ func (r *GoalRunner) recoverAttempt(ctx context.Context, goal *Goal) (*RunResult
 	if last != nil && (last.Role == schema.User || last.Role == schema.Tool) {
 		result, err := r.agent.ContinueWithResult(ctx)
 		if err != nil {
-			r.recordRunError(context.WithoutCancel(ctx), goal, err)
+			r.recordRunError(ctx, goal, err)
 			return result, err
 		}
-		if err := r.finishAttempt(context.WithoutCancel(ctx), goal, result); err != nil {
+		if err := r.finishAttempt(ctx, goal, result); err != nil {
 			return result, err
 		}
 		return result, nil
 	}
-	return nil, r.blockRecovery(context.WithoutCancel(ctx), goal, "the previous tool execution state cannot be determined safely")
+	return nil, r.blockRecovery(ctx, goal, "the previous tool execution state cannot be determined safely")
 }
 
 func (r *GoalRunner) blockRecovery(ctx context.Context, goal *Goal, reason string) error {
+	persistCtx, cancel := r.persistenceContext(ctx)
+	defer cancel()
 	goal.Status = GoalStatusBlocked
 	goal.LastReason = reason
 	goal.LastError = ErrGoalRecoveryRequired.Error()
-	if err := r.save(ctx, goal); err != nil {
+	if err := r.save(persistCtx, goal); err != nil {
 		return err
 	}
 	return fmt.Errorf("%w: %s", ErrGoalRecoveryRequired, reason)
 }
 
 func (r *GoalRunner) recordRunError(ctx context.Context, goal *Goal, runErr error) {
-	latest, err := r.loadForAgent(ctx, goal.ID)
+	persistCtx, cancel := r.persistenceContext(ctx)
+	defer cancel()
+	latest, err := r.loadForAgent(persistCtx, goal.ID)
 	if err == nil {
 		*goal = *latest
 	}
 	goal.LastError = runErr.Error()
-	_ = r.save(ctx, goal)
+	_ = r.save(persistCtx, goal)
+}
+
+func (r *GoalRunner) loadForAgentDetached(ctx context.Context, id string) (*Goal, error) {
+	persistCtx, cancel := r.persistenceContext(ctx)
+	defer cancel()
+	return r.loadForAgent(persistCtx, id)
+}
+
+func (r *GoalRunner) saveDetached(ctx context.Context, goal *Goal) error {
+	persistCtx, cancel := r.persistenceContext(ctx)
+	defer cancel()
+	return r.save(persistCtx, goal)
 }
 
 func (r *GoalRunner) loadForAgent(ctx context.Context, id string) (*Goal, error) {

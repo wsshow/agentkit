@@ -158,6 +158,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // optional
     ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // optional
     ModelFailoverConfig: failoverConfig,                              // optional
+    PersistenceTimeout: 30 * time.Second,                             // optional; this is the default
     MaxIterations:   20,                                  // max LLM call cycles (default: 20)
     CheckPointStore: store,                               // checkpoint store (optional)
     Session: &agentkit.SessionConfig{                     // automatic restore/save (optional)
@@ -353,6 +354,8 @@ Recreate the file store and Agent with the same session ID after a process resta
 Every successfully committed state change emits `EventGoalUpdate` through `Agent.Subscribe`. Its `Event.Goal` is an isolated snapshot with the same revision as durable storage, so applications can update live status without polling and use `Get` after reconnecting.
 
 Goal state is committed before work, after Agent output, and after evaluation. If saved session history proves that a step finished, `Resume` evaluates it without repeating the work. If the process could have exited after an external side effect but before session progress was saved, the goal becomes `blocked` with `ErrGoalRecoveryRequired`; only the explicit `Retry` method may replay that uncertain step. This favors safety over pretending to provide exactly-once external effects.
+
+Internal session, checkpoint, and goal cleanup after cancellation uses a bounded context. `Config.PersistenceTimeout` defaults to `DefaultPersistenceTimeout` (30 seconds), so a broken custom store cannot prevent a run from exiting forever; raise it only when the persistence backend legitimately needs more time.
 
 The default model-based evaluator reuses the Agent's `ModelRetryConfig` and `ModelFailoverConfig`, including custom retry decisions, backoff, and alternate model selection. It exhausts retries on the current model before failing over, matching normal Agent calls. Transient evaluation failures therefore receive the same protection without another configuration block. A custom `GoalEvaluator` remains fully under application control.
 

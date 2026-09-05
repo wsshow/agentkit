@@ -158,6 +158,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // 可选
     ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // 可选
     ModelFailoverConfig: failoverConfig,                              // 可选
+    PersistenceTimeout: 30 * time.Second,                             // 可选；这也是默认值
     MaxIterations:   20,                                  // 最大 LLM 调用轮次（默认 20）
     CheckPointStore: store,                               // 检查点存储（可选）
     Session: &agentkit.SessionConfig{                     // 自动恢复/保存（可选）
@@ -353,6 +354,8 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 每次状态成功落盘后，都会通过 `Agent.Subscribe` 发出 `EventGoalUpdate`。其中的 `Event.Goal` 是与持久化版本一致、彼此隔离的快照，应用在线时无需轮询即可更新进度，断线重连后再用 `Get` 对齐最新状态。
 
 目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
+
+请求取消后的 Session、Checkpoint 和 Goal 内部收尾会使用有界 context。`Config.PersistenceTimeout` 默认为 `DefaultPersistenceTimeout`（30 秒），异常自定义存储不会再让任务永久无法退出；只有后端确实需要更久时才应调大。
 
 默认的模型判断器会直接复用 Agent 的 `ModelRetryConfig` 和 `ModelFailoverConfig`，包括自定义重试判断、退避与备用模型选择，并与普通 Agent 调用一样先耗尽当前模型重试再切换。因此短暂的判断请求故障无需重复配置；自定义 `GoalEvaluator` 仍完全由应用自行控制。
 
