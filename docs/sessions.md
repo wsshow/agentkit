@@ -134,7 +134,9 @@ branch, err := manager.Fork(ctx, "conversation-42", agentkit.CreateSessionOption
 })
 ```
 
-Full history and compacted context are copied. Operational state is deliberately not copied: the branch receives its own checkpoint ID and does not inherit pending interrupts, goals, or reduced tool results. References to an offloaded result in older copied context remain visible as historical text, but the branch cannot read the source session's result; start a fresh tool call when the complete payload is still needed.
+Full history and compacted context are copied. Operational state is deliberately not copied: the branch receives its own checkpoint ID and does not inherit goals or reduced tool results. References to an offloaded result in older copied context remain visible as historical text, but the branch cannot read the source session's result; start a fresh tool call when the complete payload is still needed.
+
+A source with a pending HITL interrupt cannot be forked and returns `ErrResumeRequired`. Resume the checkpoint or explicitly abandon it with `ClearCheckpoint` first. This prevents the branch from inheriting an assistant tool-call message without the checkpoint and tool result needed to complete that turn.
 
 If the source Agent is running, `Fork` waits for its current run—including queued follow-up work and final persistence—to settle before taking the snapshot. The wait follows the `Fork` context and creates no target session when that context expires, so a branch never starts from a partial tool-call turn.
 
