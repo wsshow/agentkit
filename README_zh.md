@@ -382,9 +382,12 @@ goalID := run.ID() // 已经落盘，现在可安全返回给客户端
 
 result, err := run.WaitContext(waitCtx) // 等待超时不会取消目标
 err = run.Pause(controlCtx)             // 先持久化暂停，再取消活跃工作
+
+resumed, err := goals.ResumeAsync(workerCtx, goalID)
+resumed, err = goals.ResumePendingAsync(workerCtx) // 仅适用于恰好一个未完成目标
 ```
 
-`StartAsync` 应传入应用或 worker 生命周期的 context，而不是短暂的 HTTP 请求 context。在线调用方可使用 `Done`/`Wait`；客户端断线后可用返回的 ID 重连，并通过 `Get` 或 `List` 读取同一份持久化状态。
+异步方法应传入应用或 worker 生命周期的 context，而不是短暂的 HTTP 请求 context。在线调用方可使用 `Done`/`Wait`；客户端断线后可用返回的 ID 重连，并通过 `Get` 或 `List` 读取同一份持久化状态。
 
 进程重启后，使用相同目录、Agent 名称和会话 ID 重建文件存储与 Agent，再调用 `goals.Resume(ctx, "release-v2")`。若 ID 是自动生成的，`goals.ResumePending(ctx)` 会恢复当前会话唯一的未完成目标；存在多个目标时返回 `ErrGoalResumeAmbiguous`，不会擅自选择。`goals.List(ctx)` 只列出当前会话中可直接用于重连界面的摘要，包含目标内容、迭代上限、待处理阶段、最近原因和最近错误。内置会话存储会自动提供配套的 `GoalStore`；自定义判断器或存储可通过 `GoalRunnerConfig` 设置。状态控制使用 `Get`、`Pause` 和 `Clear`；目标进入 HITL 后，通过 `ResumeInterrupt` 提交待处理的中断 ID。
 

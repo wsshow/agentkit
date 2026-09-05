@@ -121,3 +121,46 @@ func TestGoalRunPausePersistsAndCancelsBackgroundWork(t *testing.T) {
 		t.Fatalf("saved goal = %#v, want paused", saved)
 	}
 }
+
+func TestGoalRunnerResumePendingAsyncContinuesSavedEvaluation(t *testing.T) {
+	ctx := context.Background()
+	evaluationErr := errors.New("evaluation temporarily unavailable")
+	model := NewMockChatModel(MockModelText("work completed"))
+	agent, err := New(ctx, &Config{
+		Name:    "worker",
+		Model:   model,
+		Session: &SessionConfig{ID: "resume-async", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	evaluator := GoalEvaluatorFunc(func(context.Context, GoalEvaluation) (GoalDecision, error) {
+		return GoalDecision{}, evaluationErr
+	})
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{Evaluator: evaluator})
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+	if _, err := runner.Start(ctx, GoalRequest{ID: "resume", Objective: "finish work"}); !errors.Is(err, evaluationErr) {
+		t.Fatalf("Start() error = %v, want evaluation error", err)
+	}
+	runner.evaluator = GoalEvaluatorFunc(func(context.Context, GoalEvaluation) (GoalDecision, error) {
+		return GoalDecision{Complete: true, Reason: "verified"}, nil
+	})
+
+	run, err := runner.ResumePendingAsync(ctx)
+	if err != nil {
+		t.Fatalf("ResumePendingAsync() error = %v", err)
+	}
+	if run.ID() != "resume" {
+		t.Fatalf("GoalRun.ID() = %q, want resume", run.ID())
+	}
+	result, err := run.Wait()
+	if err != nil || result.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("Wait() = %#v, %v, want completed", result, err)
+	}
+	if got := len(model.Calls()); got != 1 {
+		t.Fatalf("model calls = %d, want saved work not to repeat", got)
+	}
+}

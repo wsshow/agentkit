@@ -330,6 +330,44 @@ func (r *GoalRunner) beginStart(ctx context.Context, request GoalRequest) (runCt
 
 // Resume 从持久化状态继续自动推进目标。
 func (r *GoalRunner) Resume(ctx context.Context, id string) (out *GoalRunResult, retErr error) {
+	prepared, err := r.prepareResume(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, prepared.finish()) }()
+	if prepared.terminal != nil {
+		return prepared.terminal, prepared.terminalErr
+	}
+	return r.drive(prepared.ctx, prepared.goal, nil)
+}
+
+// ResumeAsync 校验持久化状态并取得执行所有权后，在后台继续指定目标。
+func (r *GoalRunner) ResumeAsync(ctx context.Context, id string) (*GoalRun, error) {
+	prepared, err := r.prepareResume(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	run := &GoalRun{runner: r, id: id, done: make(chan struct{})}
+	if prepared.terminal != nil {
+		run.complete(prepared.terminal, errors.Join(prepared.terminalErr, prepared.finish()))
+		return run, nil
+	}
+	go func() {
+		result, runErr := r.drive(prepared.ctx, prepared.goal, nil)
+		run.complete(result, errors.Join(runErr, prepared.finish()))
+	}()
+	return run, nil
+}
+
+type preparedGoalResume struct {
+	ctx         context.Context
+	finish      func() error
+	goal        *Goal
+	terminal    *GoalRunResult
+	terminalErr error
+}
+
+func (r *GoalRunner) prepareResume(ctx context.Context, id string) (prepared *preparedGoalResume, retErr error) {
 	if err := validateGoalContextAndID(ctx, id); err != nil {
 		return nil, err
 	}
@@ -337,16 +375,27 @@ func (r *GoalRunner) Resume(ctx context.Context, id string) (out *GoalRunResult,
 	if err != nil {
 		return nil, err
 	}
-	defer func() { retErr = errors.Join(retErr, finish()) }()
+	owned := false
+	defer func() {
+		if !owned {
+			retErr = errors.Join(retErr, finish())
+		}
+	}()
 	goal, err := r.loadForAgent(runCtx, id)
 	if err != nil {
 		return nil, err
 	}
+	prepared = &preparedGoalResume{ctx: runCtx, finish: finish, goal: goal}
 	switch goal.Status {
 	case GoalStatusCompleted:
-		return &GoalRunResult{Goal: goal}, nil
+		prepared.terminal = &GoalRunResult{Goal: goal}
+		owned = true
+		return prepared, nil
 	case GoalStatusBlocked:
-		return &GoalRunResult{Goal: goal}, fmt.Errorf("%w: %s", ErrGoalBlocked, goal.LastReason)
+		prepared.terminal = &GoalRunResult{Goal: goal}
+		prepared.terminalErr = fmt.Errorf("%w: %s", ErrGoalBlocked, goal.LastReason)
+		owned = true
+		return prepared, nil
 	}
 	if len(r.agent.PendingInterrupts()) > 0 {
 		if goal.AttemptIteration > goal.Iteration {
@@ -357,18 +406,28 @@ func (r *GoalRunner) Resume(ctx context.Context, id string) (out *GoalRunResult,
 		goal.Status = GoalStatusPaused
 		goal.LastReason = "waiting for human input"
 		if err := r.saveDetached(runCtx, goal); err != nil {
-			return &GoalRunResult{Goal: goal}, errors.Join(ErrGoalInterruptRequired, err)
+			prepared.terminal = &GoalRunResult{Goal: goal}
+			prepared.terminalErr = errors.Join(ErrGoalInterruptRequired, err)
+			owned = true
+			return prepared, nil
 		}
-		return &GoalRunResult{Goal: cloneGoal(goal)}, ErrGoalInterruptRequired
+		prepared.terminal = &GoalRunResult{Goal: cloneGoal(goal)}
+		prepared.terminalErr = ErrGoalInterruptRequired
+		owned = true
+		return prepared, nil
 	}
 	if goal.AwaitingInterrupt {
-		return &GoalRunResult{Goal: goal}, ErrGoalInterruptRequired
+		prepared.terminal = &GoalRunResult{Goal: goal}
+		prepared.terminalErr = ErrGoalInterruptRequired
+		owned = true
+		return prepared, nil
 	}
 	goal.Status = GoalStatusActive
 	if err := r.save(runCtx, goal); err != nil {
 		return nil, err
 	}
-	return r.drive(runCtx, goal, nil)
+	owned = true
+	return prepared, nil
 }
 
 // ResumeInterrupt 提交 HITL 数据后继续当前目标。
@@ -443,9 +502,26 @@ func (r *GoalRunner) List(ctx context.Context) ([]GoalInfo, error) {
 // 没有未完成目标时返回 ErrGoalNotFound；存在多个时返回 ErrGoalResumeAmbiguous，
 // 调用方可先使用 List 查看并通过 Resume 明确选择。
 func (r *GoalRunner) ResumePending(ctx context.Context) (*GoalRunResult, error) {
-	goals, err := r.List(ctx)
+	id, err := r.pendingGoalID(ctx)
 	if err != nil {
 		return nil, err
+	}
+	return r.Resume(ctx, id)
+}
+
+// ResumePendingAsync 在后台恢复当前会话唯一的未完成目标。
+func (r *GoalRunner) ResumePendingAsync(ctx context.Context) (*GoalRun, error) {
+	id, err := r.pendingGoalID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.ResumeAsync(ctx, id)
+}
+
+func (r *GoalRunner) pendingGoalID(ctx context.Context) (string, error) {
+	goals, err := r.List(ctx)
+	if err != nil {
+		return "", err
 	}
 	pending := make([]string, 0, len(goals))
 	for _, goal := range goals {
@@ -455,12 +531,12 @@ func (r *GoalRunner) ResumePending(ctx context.Context) (*GoalRunResult, error) 
 	}
 	session := r.agent.Session()
 	if len(pending) == 0 {
-		return nil, fmt.Errorf("%w: no unfinished goal for session %q", ErrGoalNotFound, session.ID)
+		return "", fmt.Errorf("%w: no unfinished goal for session %q", ErrGoalNotFound, session.ID)
 	}
 	if len(pending) > 1 {
-		return nil, fmt.Errorf("%w for session %q: %s", ErrGoalResumeAmbiguous, session.ID, strings.Join(pending, ", "))
+		return "", fmt.Errorf("%w for session %q: %s", ErrGoalResumeAmbiguous, session.ID, strings.Join(pending, ", "))
 	}
-	return r.Resume(ctx, pending[0])
+	return pending[0], nil
 }
 
 // Pause 持久化暂停状态，并取消由当前 GoalRunner 发起的同一目标执行。
