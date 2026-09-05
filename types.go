@@ -4,6 +4,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -12,6 +13,48 @@ type ChatModel = model.BaseChatModel
 
 // Tool 基础工具接口
 type Tool = tool.BaseTool
+
+// ToolMiddleware 为工具调用添加自定义执行逻辑。
+type ToolMiddleware = compose.ToolMiddleware
+
+// InvokableToolMiddleware 包装非流式工具调用。
+type InvokableToolMiddleware = compose.InvokableToolMiddleware
+
+// InvokableToolEndpoint 是非流式工具调用端点。
+type InvokableToolEndpoint = compose.InvokableToolEndpoint
+
+// StreamableToolMiddleware 包装流式文本工具调用。
+type StreamableToolMiddleware = compose.StreamableToolMiddleware
+
+// StreamableToolEndpoint 是流式文本工具调用端点。
+type StreamableToolEndpoint = compose.StreamableToolEndpoint
+
+// EnhancedInvokableToolMiddleware 包装非流式多模态工具调用。
+type EnhancedInvokableToolMiddleware = compose.EnhancedInvokableToolMiddleware
+
+// EnhancedInvokableToolEndpoint 是非流式多模态工具调用端点。
+type EnhancedInvokableToolEndpoint = compose.EnhancedInvokableToolEndpoint
+
+// EnhancedStreamableToolMiddleware 包装流式多模态工具调用。
+type EnhancedStreamableToolMiddleware = compose.EnhancedStreamableToolMiddleware
+
+// EnhancedStreamableToolEndpoint 是流式多模态工具调用端点。
+type EnhancedStreamableToolEndpoint = compose.EnhancedStreamableToolEndpoint
+
+// ToolInput 描述一次工具调用输入。
+type ToolInput = compose.ToolInput
+
+// ToolOutput 描述一次非流式工具调用输出。
+type ToolOutput = compose.ToolOutput
+
+// StreamToolOutput 描述一次流式文本工具调用输出。
+type StreamToolOutput = compose.StreamToolOutput
+
+// EnhancedInvokableToolOutput 描述一次非流式多模态工具调用输出。
+type EnhancedInvokableToolOutput = compose.EnhancedInvokableToolOutput
+
+// EnhancedStreamableToolOutput 描述一次流式多模态工具调用输出。
+type EnhancedStreamableToolOutput = compose.EnhancedStreamableToolOutput
 
 // ChatModelAgentMiddleware 是 ChatModelAgent 扩展接口。
 type ChatModelAgentMiddleware = adk.ChatModelAgentMiddleware

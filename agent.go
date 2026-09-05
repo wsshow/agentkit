@@ -77,6 +77,7 @@ type Config struct {
 	SystemPrompt        string
 	Model               ChatModel                  // 聊天模型（可直接使用 agentkit.ChatModel 别名）
 	Tools               []Tool                     // 工具列表（可直接使用 agentkit.Tool 别名）
+	ToolPolicy          *ToolPolicy                // 工具别名、分发、执行顺序与中间件（可选）
 	History             []*schema.Message          // 完整对话历史（可选）
 	Handlers            []ChatModelAgentMiddleware // ChatModelAgent 扩展处理器
 	ModelRetryConfig    *ModelRetryConfig          // 模型调用重试配置（可选）
@@ -118,6 +119,7 @@ type Agent struct {
 	compactionMessagesBefore int
 	pendingInterrupts        []InterruptPoint
 	runInterrupted           bool
+	knownToolNames           map[string]struct{}
 
 	sessionStore     SessionStore
 	sessionID        string
@@ -235,6 +237,11 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	if err := validateCombinedToolNames(ctx, tools, cfg.Skills); err != nil {
 		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
 	}
+	knownToolNames, err := validateToolPolicy(ctx, tools, cfg.Skills, cfg.ToolPolicy)
+	if err != nil {
+		return nil, errors.Join(err, closeMCPConnections(mcpConnections))
+	}
+	a.knownToolNames = knownToolNames
 
 	agentCfg := &adk.ChatModelAgentConfig{
 		Name:                cfg.Name,
@@ -247,11 +254,9 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		ModelFailoverConfig: cfg.ModelFailoverConfig,
 	}
 
-	if len(tools) > 0 {
+	if len(tools) > 0 || cfg.ToolPolicy != nil {
 		agentCfg.ToolsConfig = adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools: tools,
-			},
+			ToolsNodeConfig: cfg.ToolPolicy.toolsNodeConfig(tools),
 		}
 	}
 

@@ -148,6 +148,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     SystemPrompt:    "系统指令",
     Model:           chatModel,                          // agentkit.ChatModel
     Tools:           []agentkit.Tool{myTool},             // 可选
+    ToolPolicy:      &agentkit.ToolPolicy{Sequential: true}, // 可选
     Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // 可选
     ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // 可选
     ModelFailoverConfig: failoverConfig,                              // 可选
@@ -468,6 +469,32 @@ model := agentkit.NewMockChatModel(
 )
 ```
 
+### 工具策略
+
+可以集中配置工具分发，无需直接构造 Eino `ToolsNode`：
+
+```go
+ToolPolicy: &agentkit.ToolPolicy{
+    Sequential: true, // 默认并行执行
+    Aliases: map[string]agentkit.ToolAlias{
+        "web_search": {
+            Names: []string{"search"},
+            Arguments: map[string][]string{
+                "query": {"q", "keywords"},
+            },
+        },
+    },
+    RewriteArguments: func(ctx context.Context, name, arguments string) (string, error) {
+        return validateAndNormalize(arguments)
+    },
+    UnknownTool: func(ctx context.Context, name, arguments string) (string, error) {
+        return "该工具不可用，请选择已经注册的工具。", nil
+    },
+}
+```
+
+`New` 会根据全部本地、Skill 和 MCP 工具校验别名，别名冲突或引用不存在的正式工具都会立即失败。高级拦截场景可通过 `Middlewares` 传入 `agentkit.ToolMiddleware`。
+
 ### 转向与后续消息
 
 ```go
@@ -567,6 +594,9 @@ AgentKit 提供类型别名，消费者无需直接导入 eino 包：
 | ---------------- | ------------------------- |
 | `ChatModel`      | `model.BaseChatModel`     |
 | `Tool`           | `tool.BaseTool`           |
+| `ToolMiddleware` | `compose.ToolMiddleware`  |
+| `ToolInput`      | `compose.ToolInput`       |
+| `ToolOutput`     | `compose.ToolOutput`      |
 | `ToolCall`       | `schema.ToolCall`         |
 | `ResponseMeta`   | `schema.ResponseMeta`     |
 | `TokenUsage`     | `schema.TokenUsage`       |

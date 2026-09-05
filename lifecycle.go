@@ -122,6 +122,12 @@ func (a *Agent) prepareToolBatch(calls []schema.ToolCall) {
 
 func (a *Agent) waitToolBatch(ctx context.Context) error {
 	a.mu.Lock()
+	for _, info := range a.toolCalls {
+		if _, known := a.knownToolNames[info.name]; !known {
+			a.mu.Unlock()
+			return nil
+		}
+	}
 	if a.toolBatchDone == nil {
 		a.toolBatchDone = make(chan struct{})
 		a.toolBatchDoneFlag = false

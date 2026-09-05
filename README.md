@@ -148,6 +148,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
     SystemPrompt:    "System instructions",
     Model:           chatModel,                          // agentkit.ChatModel
     Tools:           []agentkit.Tool{myTool},             // optional
+    ToolPolicy:      &agentkit.ToolPolicy{Sequential: true}, // optional
     Handlers:         []agentkit.ChatModelAgentMiddleware{myHandler}, // optional
     ModelRetryConfig: &agentkit.ModelRetryConfig{MaxRetries: 2},      // optional
     ModelFailoverConfig: failoverConfig,                              // optional
@@ -468,6 +469,32 @@ model := agentkit.NewMockChatModel(
 )
 ```
 
+### Tool Policy
+
+Configure tool dispatch in one place without constructing an Eino `ToolsNode` directly:
+
+```go
+ToolPolicy: &agentkit.ToolPolicy{
+    Sequential: true, // default is parallel execution
+    Aliases: map[string]agentkit.ToolAlias{
+        "web_search": {
+            Names: []string{"search"},
+            Arguments: map[string][]string{
+                "query": {"q", "keywords"},
+            },
+        },
+    },
+    RewriteArguments: func(ctx context.Context, name, arguments string) (string, error) {
+        return validateAndNormalize(arguments)
+    },
+    UnknownTool: func(ctx context.Context, name, arguments string) (string, error) {
+        return "That tool is unavailable; choose a registered tool.", nil
+    },
+}
+```
+
+Aliases are validated against all local, skill, and MCP tool names during `New`; collisions and references to missing canonical tools fail immediately. `Middlewares` accepts `agentkit.ToolMiddleware` for advanced interception.
+
 ### Steering & Follow-Up
 
 ```go
@@ -567,6 +594,9 @@ AgentKit provides type aliases so consumers don't need to import eino packages d
 | ---------------- | ------------------------- |
 | `ChatModel`      | `model.BaseChatModel`     |
 | `Tool`           | `tool.BaseTool`           |
+| `ToolMiddleware` | `compose.ToolMiddleware`  |
+| `ToolInput`      | `compose.ToolInput`       |
+| `ToolOutput`     | `compose.ToolOutput`      |
 | `ToolCall`       | `schema.ToolCall`         |
 | `ResponseMeta`   | `schema.ResponseMeta`     |
 | `TokenUsage`     | `schema.TokenUsage`       |
