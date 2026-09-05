@@ -21,6 +21,8 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 `MaxTokens` 与 `MaxMessages` 是两个独立触发条件，任意一个超过阈值都会开始压缩。二者都不设置时，AgentKit 使用 `DefaultCompactionMaxTokens`（估算 100,000 tokens）。`KeepRecentTurns` 默认为 1，最近的用户轮次会原样保留。`Model` 可选，默认复用 Agent 主模型。
 
+只有在要求保留的最近轮次之前至少存在一轮完整对话时才会压缩。历史中的用户轮次数少于 `KeepRecentTurns` 时，即使超过阈值，AgentKit 也会保留整个当前任务，不会把唯一一条用户指令改写成摘要。单轮本身过大时应从源头缩减：大型工具载荷使用工具结果压缩，超大用户输入则应拒绝或分段。
+
 token 阈值应低于模型的硬性上下文窗口，同时为下一次输入、工具定义和模型回复留出空间。
 
 ## 两种历史视图

@@ -21,6 +21,8 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 `MaxTokens` and `MaxMessages` are independent triggers; exceeding either starts compaction. If neither is set, AgentKit uses `DefaultCompactionMaxTokens` (100,000 estimated tokens). `KeepRecentTurns` defaults to one and keeps the newest user turns verbatim. `Model` is optional and defaults to the main Agent model.
 
+Compaction only runs when at least one complete conversation exists before the requested recent turns. If the history contains fewer than `KeepRecentTurns`, AgentKit preserves the whole current task even when a threshold is exceeded; it never rewrites the only user instruction into a summary. A single oversized turn should be reduced at its source—use tool-result reduction for large tool payloads or reject/segment oversized user input.
+
 Set the token threshold below the provider's hard context window. Leave room for the next prompt, tool definitions, and the model response.
 
 ## Two History Views
