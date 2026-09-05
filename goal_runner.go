@@ -264,27 +264,56 @@ func NewGoalRunner(agent *Agent, cfg *GoalRunnerConfig) (*GoalRunner, error) {
 
 // Start 创建并执行一个新目标。相同 ID 已存在时返回 ErrGoalExists，避免覆盖恢复点。
 func (r *GoalRunner) Start(ctx context.Context, request GoalRequest) (out *GoalRunResult, retErr error) {
-	if request.ID == "" {
-		request.ID = uuid.NewString()
-	}
-	if err := validateGoalRequest(ctx, request); err != nil {
-		return nil, err
-	}
-	runCtx, finish, err := r.begin(ctx, request.ID)
+	runCtx, finish, goal, err := r.beginStart(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, finish()) }()
-	if _, err := r.store.Load(runCtx, request.ID); err == nil {
-		return nil, fmt.Errorf("%w: %s", ErrGoalExists, request.ID)
-	} else if !errors.Is(err, ErrGoalNotFound) {
+	return r.drive(runCtx, goal, nil)
+}
+
+// StartAsync 创建并持久化新目标后立即返回后台运行句柄。
+// ctx 控制后台执行生命周期；服务端应传入应用或 worker 生命周期的 context。
+func (r *GoalRunner) StartAsync(ctx context.Context, request GoalRequest) (*GoalRun, error) {
+	runCtx, finish, goal, err := r.beginStart(ctx, request)
+	if err != nil {
 		return nil, err
+	}
+	run := &GoalRun{runner: r, id: goal.ID, done: make(chan struct{})}
+	go func() {
+		result, runErr := r.drive(runCtx, goal, nil)
+		run.complete(result, errors.Join(runErr, finish()))
+	}()
+	return run, nil
+}
+
+func (r *GoalRunner) beginStart(ctx context.Context, request GoalRequest) (runCtx context.Context, finish func() error, goal *Goal, retErr error) {
+	if request.ID == "" {
+		request.ID = uuid.NewString()
+	}
+	if err := validateGoalRequest(ctx, request); err != nil {
+		return nil, nil, nil, err
+	}
+	runCtx, finish, err := r.begin(ctx, request.ID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	prepared := false
+	defer func() {
+		if !prepared {
+			retErr = errors.Join(retErr, finish())
+		}
+	}()
+	if _, err := r.store.Load(runCtx, request.ID); err == nil {
+		return nil, nil, nil, fmt.Errorf("%w: %s", ErrGoalExists, request.ID)
+	} else if !errors.Is(err, ErrGoalNotFound) {
+		return nil, nil, nil, err
 	}
 	maxIterations := request.MaxIterations
 	if maxIterations == 0 {
 		maxIterations = r.maxIterations
 	}
-	goal := &Goal{
+	goal = &Goal{
 		ID:              request.ID,
 		SessionID:       r.agent.Session().ID,
 		Objective:       strings.TrimSpace(request.Objective),
@@ -293,9 +322,10 @@ func (r *GoalRunner) Start(ctx context.Context, request GoalRequest) (out *GoalR
 		MaxIterations:   maxIterations,
 	}
 	if err := r.save(runCtx, goal); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	return r.drive(runCtx, goal, nil)
+	prepared = true
+	return runCtx, finish, goal, nil
 }
 
 // Resume 从持久化状态继续自动推进目标。

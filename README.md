@@ -372,6 +372,20 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 })
 ```
 
+For request/response servers, start the durable goal in the background without writing goroutine plumbing:
+
+```go
+run, err := goals.StartAsync(workerCtx, agentkit.GoalRequest{
+    Objective: "Prepare and verify the v2 release",
+})
+goalID := run.ID() // already persisted; safe to return to the client now
+
+result, err := run.WaitContext(waitCtx) // a wait timeout does not cancel the goal
+err = run.Pause(controlCtx)             // persists pause, then cancels active work
+```
+
+Use an application or worker lifetime context for `StartAsync`, rather than a short HTTP request context. Live callers can use `Done`/`Wait`; disconnected clients can reconnect with the returned ID and read the same durable state through `Get` or `List`.
+
 Recreate the file store and Agent with the same session ID after a process restart, then call `goals.Resume(ctx, "release-v2")`. If the ID was generated automatically, `goals.ResumePending(ctx)` resumes the current session's only unfinished goal; it returns `ErrGoalResumeAmbiguous` instead of guessing when multiple goals exist. `goals.List(ctx)` returns reconnect-ready summaries only for the current session, including the objective, iteration limit, pending phase, latest reason, and latest error. The built-in session stores automatically supply their matching `GoalStore`; a custom evaluator or store can be set through `GoalRunnerConfig`. Use `Get`, `Pause`, and `Clear` for control. When a goal reaches HITL, submit the pending IDs with `ResumeInterrupt`.
 
 Every successfully committed state change emits `EventGoalUpdate` through `Agent.Subscribe`. Its `Event.Goal` is an isolated snapshot with the same revision as durable storage, so applications can update live status without polling and use `Get` after reconnecting.
