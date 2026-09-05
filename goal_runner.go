@@ -332,17 +332,28 @@ func (r *GoalRunner) Get(ctx context.Context, id string) (*Goal, error) {
 
 // Pause 持久化暂停状态，并取消由当前 GoalRunner 发起的同一目标执行。
 func (r *GoalRunner) Pause(ctx context.Context, id string) error {
-	goal, err := r.loadForAgent(ctx, id)
-	if err != nil {
-		return err
+	var saved bool
+	for range 3 {
+		goal, err := r.loadForAgent(ctx, id)
+		if err != nil {
+			return err
+		}
+		if goal.Status == GoalStatusCompleted {
+			return nil
+		}
+		goal.Status = GoalStatusPaused
+		goal.LastReason = "paused by caller"
+		err = r.save(ctx, goal)
+		if err == nil {
+			saved = true
+			break
+		}
+		if !errors.Is(err, ErrGoalConflict) {
+			return err
+		}
 	}
-	if goal.Status == GoalStatusCompleted {
-		return nil
-	}
-	goal.Status = GoalStatusPaused
-	goal.LastReason = "paused by caller"
-	if err := r.save(ctx, goal); err != nil {
-		return err
+	if !saved {
+		return fmt.Errorf("%w: could not pause goal %q after retries", ErrGoalConflict, id)
 	}
 	r.activeMu.Lock()
 	if r.activeID == id && r.cancel != nil {

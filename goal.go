@@ -13,6 +13,8 @@ import (
 var (
 	// ErrGoalNotFound 表示目标存储中不存在指定目标。
 	ErrGoalNotFound = errors.New("agentkit: goal not found")
+	// ErrGoalConflict 表示目标已被其他调用方更新，当前快照不能覆盖新状态。
+	ErrGoalConflict = errors.New("agentkit: goal revision conflict")
 )
 
 // GoalStatus 描述持久化目标的生命周期状态。
@@ -45,6 +47,7 @@ type Goal struct {
 	AttemptIteration    int        `json:"attempt_iteration,omitempty"`
 	HistoryMessageCount int        `json:"history_message_count,omitempty"`
 	PendingPrompt       string     `json:"pending_prompt,omitempty"`
+	Revision            uint64     `json:"revision"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
@@ -55,12 +58,15 @@ type GoalInfo struct {
 	SessionID string     `json:"session_id"`
 	Status    GoalStatus `json:"status"`
 	Iteration int        `json:"iteration"`
+	Revision  uint64     `json:"revision"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // GoalStore 管理持久化目标。
 // Load 在目标不存在时必须返回包装 ErrGoalNotFound 的错误；Delete 必须是幂等的。
 // 实现还必须可以安全地被多个 goroutine 调用，并且不得保留调用方传入的可变数据。
+// Save 使用 Goal.Revision 进行乐观并发控制：新目标必须为 0，已有目标必须等于当前版本；
+// 存储成功后持久化版本加一，但不修改调用方传入的 Goal。
 type GoalStore interface {
 	Load(ctx context.Context, id string) (*Goal, error)
 	Save(ctx context.Context, goal *Goal) error
@@ -107,11 +113,21 @@ func (s *MemoryGoalStore) Save(ctx context.Context, goal *Goal) error {
 	}
 	cloned := normalizedGoal(goal)
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.goals == nil {
 		s.goals = make(map[string]*Goal)
 	}
+	if current := s.goals[goal.ID]; current != nil {
+		if goal.Revision != current.Revision {
+			return fmt.Errorf("%w: goal %q has revision %d, current revision is %d",
+				ErrGoalConflict, goal.ID, goal.Revision, current.Revision)
+		}
+	} else if goal.Revision != 0 {
+		return fmt.Errorf("%w: goal %q does not exist at revision %d",
+			ErrGoalConflict, goal.ID, goal.Revision)
+	}
+	cloned.Revision++
 	s.goals[goal.ID] = cloned
-	s.mu.Unlock()
 	return nil
 }
 
@@ -223,6 +239,7 @@ func goalInfo(goal *Goal) GoalInfo {
 		SessionID: goal.SessionID,
 		Status:    goal.Status,
 		Iteration: goal.Iteration,
+		Revision:  goal.Revision,
 		UpdatedAt: goal.UpdatedAt,
 	}
 }

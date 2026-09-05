@@ -100,3 +100,38 @@ func TestGoalStoreValidation(t *testing.T) {
 		t.Fatalf("expected ErrGoalNotFound, got %v", err)
 	}
 }
+
+func TestMemoryGoalStoreRejectsStaleRevision(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryGoalStore()
+	goal := &Goal{
+		ID: "goal", SessionID: "session", Objective: "finish",
+		Status: GoalStatusActive, MaxIterations: 5,
+	}
+	if err := store.Save(ctx, goal); err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	first, err := store.Load(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("load first copy: %v", err)
+	}
+	stale, err := store.Load(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("load stale copy: %v", err)
+	}
+	first.Status = GoalStatusPaused
+	if err := store.Save(ctx, first); err != nil {
+		t.Fatalf("save first copy: %v", err)
+	}
+	stale.Status = GoalStatusCompleted
+	if err := store.Save(ctx, stale); !errors.Is(err, ErrGoalConflict) {
+		t.Fatalf("expected ErrGoalConflict, got %v", err)
+	}
+	loaded, err := store.Load(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("load final goal: %v", err)
+	}
+	if loaded.Status != GoalStatusPaused || loaded.Revision != 2 {
+		t.Fatalf("stale update replaced current goal: %#v", loaded)
+	}
+}

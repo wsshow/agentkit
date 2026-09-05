@@ -54,17 +54,32 @@ func (s *FileGoalStore) Save(ctx context.Context, goal *Goal) error {
 	if err := validateGoal(ctx, goal); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, err := s.load(goal.ID)
+	if err != nil && !errors.Is(err, ErrGoalNotFound) {
+		return err
+	}
+	if current != nil {
+		if goal.Revision != current.Revision {
+			return fmt.Errorf("%w: goal %q has revision %d, current revision is %d",
+				ErrGoalConflict, goal.ID, goal.Revision, current.Revision)
+		}
+	} else if goal.Revision != 0 {
+		return fmt.Errorf("%w: goal %q does not exist at revision %d",
+			ErrGoalConflict, goal.ID, goal.Revision)
+	}
+	stored := normalizedGoal(goal)
+	stored.Revision++
 	data, err := json.MarshalIndent(storedGoal{
 		Version: fileGoalVersion,
-		Goal:    normalizedGoal(goal),
+		Goal:    stored,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("agentkit: encode goal %q: %w", goal.ID, err)
 	}
 	data = append(data, '\n')
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	temp, err := os.CreateTemp(s.dir, ".goal-*.tmp")
 	if err != nil {
 		return fmt.Errorf("agentkit: create temporary goal file: %w", err)

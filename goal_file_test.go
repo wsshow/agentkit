@@ -77,3 +77,33 @@ func TestFileSessionStoreProvidesGoalStore(t *testing.T) {
 		t.Fatalf("unexpected goal status: %q", loaded.Status)
 	}
 }
+
+func TestFileGoalStoreRejectsStaleRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewFileGoalStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create goal store: %v", err)
+	}
+	goal := &Goal{
+		ID: "goal", SessionID: "session", Objective: "finish",
+		Status: GoalStatusActive, MaxIterations: 5,
+	}
+	if err := store.Save(ctx, goal); err != nil {
+		t.Fatalf("create goal: %v", err)
+	}
+	first, err := store.Load(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("load first copy: %v", err)
+	}
+	stale, err := store.Load(ctx, goal.ID)
+	if err != nil {
+		t.Fatalf("load stale copy: %v", err)
+	}
+	first.Status = GoalStatusPaused
+	if err := store.Save(ctx, first); err != nil {
+		t.Fatalf("save first copy: %v", err)
+	}
+	if err := store.Save(ctx, stale); !errors.Is(err, ErrGoalConflict) {
+		t.Fatalf("expected ErrGoalConflict, got %v", err)
+	}
+}
