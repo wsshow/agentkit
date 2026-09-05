@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/middlewares/patchtoolcalls"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
@@ -205,8 +206,13 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		a.pendingInterrupts = cloneInterruptPoints(loadedSession.PendingInterrupts)
 	}
 
-	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+3)
+	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+4)
 	handlers = append(handlers, cfg.Handlers...)
+	toolCallRepair, err := patchtoolcalls.New(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("agentkit: configure tool call repair: %w", err)
+	}
+	handlers = append(handlers, toolCallRepair)
 	if cfg.Skills != nil {
 		middleware, err := newSkillsMiddleware(ctx, cfg.Skills)
 		if err != nil {
