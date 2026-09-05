@@ -485,7 +485,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 ### MCP 管理
 
-AgentKit 可以连接 MCP 服务器、发现并向模型暴露工具，在连接级故障后自动重连，并随 Agent 一起关闭所有会话：
+AgentKit 可以连接 MCP 服务器、发现并向模型暴露工具，在连接级故障后自动重连由框架托管的传输会话，并随 Agent 一起关闭所有会话：
 
 ```go
 agent, err := agentkit.New(ctx, &agentkit.Config{
@@ -531,7 +531,7 @@ MCP: &agentkit.MCPConfig{
 
 为避免单次响应耗尽模型上下文，MCP 结果默认最多保留 `DefaultMCPMaxResultChars`（100,000 个字符），工具描述最多保留 `DefaultMCPMaxDescriptionChars`（4,000 个字符）。在 `MCPConfig` 中将对应限制设为正数可自定义，设为 `-1` 可关闭限制。静态请求头会在初始化时复制；如果凭证需要动态刷新，请传入带认证 `RoundTripper` 的自定义 `HTTPClient`，并避免在代码中硬编码密钥。
 
-高级场景可以用已连接的 `MCPClientSession` 代替传输配置。AgentKit 会取得该会话的所有权，并在初始化失败或 `Agent.Close` 时关闭它。
+高级场景可以用已连接的 `MCPClientSession` 代替传输配置。AgentKit 会取得该会话的所有权，并在初始化失败或 `Agent.Close` 时关闭它；自定义会话是否支持重连仍由其自身实现负责。
 
 ### 集成测试
 

@@ -485,7 +485,7 @@ For programmatic or remote storage, pass `Backend` instead of `Paths`. AgentKit 
 
 ### MCP Management
 
-AgentKit can connect MCP servers, discover their tools, expose them to the model, reconnect after connection-level failures, and close every session with the agent:
+AgentKit can connect MCP servers, discover their tools, expose them to the model, reconnect managed transport sessions after connection-level failures, and close every session with the agent:
 
 ```go
 agent, err := agentkit.New(ctx, &agentkit.Config{
@@ -531,7 +531,7 @@ MCP: &agentkit.MCPConfig{
 
 To keep a single response from exhausting model context, MCP results default to `DefaultMCPMaxResultChars` (100,000 characters) and tool descriptions to `DefaultMCPMaxDescriptionChars` (4,000). Set either `MCPConfig` limit to a positive value to customize it or `-1` to disable it. Static headers are copied during initialization; use a custom `HTTPClient` with an authentication `RoundTripper` when credentials must refresh dynamically, and avoid hard-coding secrets.
 
-Advanced callers can provide an already-connected `MCPClientSession` instead of transport settings. AgentKit takes ownership of that session and closes it on initialization failure or `Agent.Close`.
+Advanced callers can provide an already-connected `MCPClientSession` instead of transport settings. AgentKit takes ownership of that session and closes it on initialization failure or `Agent.Close`; reconnect behavior for a custom session remains the session implementation's responsibility.
 
 ### Integration Tests
 
