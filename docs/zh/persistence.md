@@ -86,6 +86,8 @@ err := agent.SaveSession(ctx)
 
 内置存储通过 `Session.Revision` 实现乐观并发控制。如果两个 Agent 恢复了同一 revision，落后的写入方会收到 `ErrSessionConflict`，不会静默覆盖更新的历史。
 
+发生冲突后，失败方 Agent 会被标记为陈旧，后续模型或工具执行会直接返回 `ErrSessionStale`。直接管理 Agent 时，应使用同一 ID 重建实例并载入权威快照；使用 `SessionManager` 时只需再次调用 `Open`，管理器会关闭陈旧实例并返回重新恢复的 Agent。分叉的内存消息不会被自动合并或重试。
+
 解析到同一目录的所有文件存储实例会共享进程内锁。因此，即使为同一目录创建两个存储，会话和目标的 revision 校验、目标租约互斥、工具结果不可变创建和检查点替换仍然成立。内置会话删除还会阻止并发保存，直至主记录及配套资源全部删除；随后陈旧保存会返回 `ErrSessionConflict`，不会在删除期间被重新创建或悄悄丢失。
 
 自定义存储应提供等价的 compare-and-swap 语义。AgentKit 不会自动合并分叉对话，因为通用合并可能打乱工具调用或破坏语义。

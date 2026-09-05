@@ -165,6 +165,8 @@ Prefer `CloseSession` when application code has the session ID because it expres
 
 Operations for the same session are serialized and honor context cancellation while waiting. Different sessions are not serialized. The manager prevents duplicate active instances only inside that manager process; `Session.Revision` still prevents silent stale writes across managers or processes. Multi-replica execution needs a database-backed ownership or lease mechanism around work dispatch in addition to the storage interfaces.
 
+If another manager wins a revision race, the losing Agent becomes stale immediately and disappears from `ActiveSessionIDs`. Calling `Open` for that ID closes the losing instance and reconstructs from the latest durable snapshot, so reconnect code does not need a special recovery branch.
+
 The active registry is explicitly lifecycle-managed rather than an invisible cache. Close sessions when clients disconnect permanently or when an application-level idle policy evicts them. Temporary network disconnects do not require closing the Agent; a reconnect can call `Open` and receive the existing instance.
 
 ## Per-Session Agent Factory
