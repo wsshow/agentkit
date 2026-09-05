@@ -100,6 +100,8 @@ if page.NextCursor != "" {
 
 内置内存和文件存储直接支持查询。已有自定义 `SessionStore` 不需要修改：公共 `QuerySessions` 函数会自动回退到 `List`。数据库后端应额外实现可选的 `SessionQueryStore`，在数据库中完成筛选和游标分页。
 
+自定义查询后端返回数量不得超过 `Limit`，必须应用全部筛选条件、保持约定排序，并根据最后一条结果生成 `NextCursor`。AgentKit 会先校验这些约束以及 ID、时间戳、计数和游标结构，再把页面交给调用方。畸形结果返回 `ErrInvalidPersistenceData`；返回的标签切片也会复制，调用方无法修改后端缓存。
+
 ## 元数据、归档与 Fork
 
 替换展示元数据时不会重写会话内容和运行状态：

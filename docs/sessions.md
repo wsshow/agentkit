@@ -100,6 +100,8 @@ Results are ordered by `UpdatedAt` descending and then ID. Cursors are opaque an
 
 The built-in memory and file stores support the query directly. Existing custom `SessionStore` implementations remain source compatible: the public `QuerySessions` helper falls back to `List`. Database backends should implement the optional `SessionQueryStore` interface so filtering and cursor pagination happen in the database.
 
+A custom query backend must return no more than `Limit`, apply every requested filter, preserve the documented ordering, and derive `NextCursor` from the last returned entry. AgentKit validates those invariants, IDs, timestamps, counts, and cursor structure before exposing a page. Invalid output returns `ErrInvalidPersistenceData`; returned tag slices are copied so callers cannot mutate a backend cache.
+
 ## Metadata, Archive, and Fork
 
 Replace user-facing metadata without rewriting conversation state:
