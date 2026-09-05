@@ -140,7 +140,7 @@ Full history and compacted context are copied. Operational state is deliberately
 
 A source with a pending HITL interrupt cannot be forked and returns `ErrResumeRequired`. Resume the checkpoint or explicitly abandon it with `ClearCheckpoint` first. This prevents the branch from inheriting an assistant tool-call message without the checkpoint and tool result needed to complete that turn.
 
-If the source Agent is running, `Fork` waits for its current run—including queued follow-up work and final persistence—to settle before taking the snapshot. The wait follows the `Fork` context and creates no target session when that context expires, so a branch never starts from a partial tool-call turn.
+If the source Agent is running, `Fork` waits for its current run—including queued follow-up work and final persistence—to settle before taking the snapshot. An active durable goal remains busy during evaluation between model steps as well. The wait follows the `Fork` context and creates no target session when that context expires, so a branch never starts from a partial tool-call turn or intermediate goal state. `UpdateMetadata` uses the same complete-cycle boundary.
 
 ## Agent Lifecycle and Concurrency
 

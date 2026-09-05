@@ -140,7 +140,7 @@ branch, err := manager.Fork(ctx, "conversation-42", agentkit.CreateSessionOption
 
 存在待处理 HITL 中断的源会话不能 Fork，此时返回 `ErrResumeRequired`。应先恢复检查点，或使用 `ClearCheckpoint` 明确放弃。这样可以避免分支继承一条 assistant 工具调用消息，却没有完成该回合所需的检查点和工具结果。
 
-源 Agent 正在运行时，`Fork` 会等待当前运行（包括队列中的 follow-up 工作和最终持久化）完全结束后再取快照。等待遵循 `Fork` 的 context；context 到期时不会创建目标会话，因此分支不会从半个工具调用回合开始。
+源 Agent 正在运行时，`Fork` 会等待当前运行（包括队列中的 follow-up 工作和最终持久化）完全结束后再取快照。持久化目标在两个模型步骤之间进行判断时同样保持忙碌状态。等待遵循 `Fork` 的 context；context 到期时不会创建目标会话，因此分支不会从半个工具调用回合或目标中间态开始。`UpdateMetadata` 使用相同的完整周期边界。
 
 ## Agent 生命周期与并发
 

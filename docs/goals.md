@@ -74,7 +74,7 @@ retried, err := goals.RetryAsync(workerCtx, goalID)
 
 `Pause` first persists the pause request and then cancels active work. `WaitContext` only bounds how long the caller waits; it does not cancel the underlying goal.
 
-A running `Start`, `Resume`, or `Retry` owns its Agent for the complete goal cycle, including evaluation between work steps. Ordinary `Prompt`, `Ask`, `Send`, `Continue`, or HITL `Resume` calls on that Agent return `ErrAgentRunning` until the goal stops, so unrelated conversation cannot enter durable goal history. `Agent.Cancel`, `Abort`, and `Close` also stop an active goal; prefer `GoalRun.Pause` when the durable state should explicitly say paused.
+A running `Start`, `Resume`, or `Retry` owns its Agent for the complete goal cycle, including evaluation between work steps. Ordinary `Prompt`, `Ask`, `Send`, `Continue`, HITL `Resume`, or direct `SaveSession` calls on that Agent return `ErrAgentRunning` until the goal stops, so unrelated conversation or an intermediate snapshot cannot enter durable goal history. `Agent.Cancel`, `Abort`, and `Close` also stop an active goal; prefer `GoalRun.Pause` when the durable state should explicitly say paused.
 
 ## Restore After a Process Restart
 
