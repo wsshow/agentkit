@@ -53,7 +53,7 @@ result, err = stream.Wait()
 
 ## 互斥与生命周期
 
-同一个 Agent 上的 `Prompt`、`Send`、`Continue` 和 `Resume` 互斥执行，并发尝试返回 `ErrAgentRunning`。HITL 后，在检查点恢复或明确清除前，新运行返回 `ErrResumeRequired`，避免未完成工具工作被静默遗弃。
+同一个 Agent 上的 `Prompt`、`Send`、`Continue` 和 `Resume` 互斥执行，并发尝试返回 `ErrAgentRunning`。`GoalRunner` 在整个目标周期内使用同一条独占执行通道，包括工作步骤之间的判断阶段。HITL 后，在检查点恢复或明确清除前，新运行返回 `ErrResumeRequired`，避免未完成工具工作被静默遗弃。
 
 ```go
 agent.Cancel()                      // 非阻塞；可在订阅回调中调用
@@ -64,7 +64,7 @@ agent.Reset()                       // 等待后清空历史与队列
 err = agent.CloseContext(stopCtx)   // 禁止新运行；限制运行与 MCP 清理等待
 ```
 
-`AbortContext` 总会先发出取消。如果自定义模型或工具忽略 context，它可能在底层仍退出时先返回停机 context 错误；Agent 会保持占用直到运行真正结束。`CloseContext` 会立即禁止新运行，并在等待截止后继续于后台完成仅一次的 MCP 清理。
+`Cancel`、`AbortContext` 和 `CloseContext` 也会停止当前独占 Agent 的 `GoalRunner`。`AbortContext` 总会先发出取消。如果自定义模型、判断器或工具忽略 context，它可能在底层仍退出时先返回停机 context 错误；Agent 会保持占用直到运行真正结束。`CloseContext` 会立即禁止新运行，并在等待截止后继续于后台完成仅一次的 MCP 清理。
 
 ## 请求级配置
 

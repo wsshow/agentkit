@@ -53,7 +53,7 @@ Resume from existing state without a new user message with `Continue` or `Contin
 
 ## Mutual Exclusion and Lifecycle
 
-`Prompt`, `Send`, `Continue`, and `Resume` are mutually exclusive on one Agent. A concurrent attempt returns `ErrAgentRunning`. After a HITL interrupt, fresh runs return `ErrResumeRequired` until the checkpoint is resumed or explicitly cleared, preventing unfinished tool work from being silently abandoned.
+`Prompt`, `Send`, `Continue`, and `Resume` are mutually exclusive on one Agent. A concurrent attempt returns `ErrAgentRunning`. A `GoalRunner` reserves the same execution lane for its whole goal cycle, including evaluation between work steps. After a HITL interrupt, fresh runs return `ErrResumeRequired` until the checkpoint is resumed or explicitly cleared, preventing unfinished tool work from being silently abandoned.
 
 ```go
 agent.Cancel()                    // non-blocking; safe inside subscribers
@@ -64,7 +64,7 @@ agent.Reset()                     // wait, then clear history and queues
 err = agent.CloseContext(stopCtx) // prevent new runs; bound run and MCP cleanup
 ```
 
-`AbortContext` always sends cancellation first. If custom model or tool code ignores its context, it may return the shutdown context error while that code is still unwinding; the Agent remains reserved until the run exits. `CloseContext` prevents new runs immediately and continues one-time MCP cleanup in the background after a wait deadline.
+`Cancel`, `AbortContext`, and `CloseContext` also stop a `GoalRunner` currently owning the Agent. `AbortContext` always sends cancellation first. If custom model, evaluator, or tool code ignores its context, it may return the shutdown context error while that code is still unwinding; the Agent remains reserved until the run exits. `CloseContext` prevents new runs immediately and continues one-time MCP cleanup in the background after a wait deadline.
 
 ## Request-Scoped Configuration
 

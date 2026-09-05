@@ -72,6 +72,8 @@ retried, err := goals.RetryAsync(workerCtx, goalID)
 
 `Pause` 会先持久化暂停请求，再取消当前工作。`WaitContext` 只限制调用方等待时长，不会取消底层目标。
 
+运行中的 `Start`、`Resume` 或 `Retry` 会在整个目标周期内独占 Agent，包括工作步骤之间的判断阶段。目标停止前，在同一 Agent 上调用普通 `Prompt`、`Ask`、`Send`、`Continue` 或 HITL `Resume` 会返回 `ErrAgentRunning`，因此无关对话不会混入持久化目标历史。`Agent.Cancel`、`Abort` 和 `Close` 也会停止活动目标；需要让持久化状态明确显示为暂停时，应优先使用 `GoalRun.Pause`。
+
 ## 进程重启后恢复
 
 使用同一会话 ID 重建文件存储和 Agent，再创建 `GoalRunner` 并调用：
