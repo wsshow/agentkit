@@ -421,6 +421,8 @@ The default lease lasts one minute and renews about every 20 seconds. `GoalRunne
 
 The file store is still intended for a local single-process worker; its lease survives restart but is not a distributed filesystem lock. Multi-replica deployments should transactionally implement database-backed `SessionStore`, `CheckpointStore`, `GoalStore`, and `GoalLeaseStore`. `GoalRunner` does not keep running after its host process stops; a supervisor should restart a worker and call `Resume` after the lease becomes available.
 
+The runnable [goal example](examples/goal/) starts a persisted goal from command-line text and, after interruption or process restart, resumes the current session's only unfinished goal without requiring its ID.
+
 ### Automatic Context Compaction
 
 Enable `Compaction` to summarize context after a configured limit while preserving the most recent user turns verbatim:
@@ -791,6 +793,7 @@ See the [examples](examples/) directory:
 - **[tools](examples/tools/)** — Tool calls with progress events
 - **[history](examples/history/)** — Export and restore conversation history
 - **[session](examples/session/)** — Automatically persist and restore sessions across processes
+- **[goal](examples/goal/)** — Run and reconnect to a durable multi-step goal
 - **[compaction](examples/compaction/)** — Automatically compact long conversation contexts
 - **[skills](examples/skills/)** — Load reusable instructions from local `SKILL.md` files
 - **[mcp](examples/mcp/)** — Connect and call a Streamable HTTP MCP server

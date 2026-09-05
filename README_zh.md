@@ -421,6 +421,8 @@ key, ok := agentkit.GoalOperationKey(ctx, "publish-release")
 
 文件存储依旧定位于本地单进程 worker；其中的租约可以跨重启保留，但不是分布式文件锁。多副本部署应通过数据库事务实现 `SessionStore`、`CheckpointStore`、`GoalStore` 和 `GoalLeaseStore`。`GoalRunner` 不会在宿主进程停止后凭空继续运行；应由 supervisor 在租约可用后拉起 worker 并调用 `Resume`。
 
+可直接运行的 [goal 示例](examples/goal/) 支持从命令行文本启动持久化目标；中断或进程重启后，不需要记住 ID，不带参数再次运行即可恢复当前会话唯一的未完成目标。
+
 ### 自动上下文压缩
 
 启用 `Compaction` 后，AgentKit 会在上下文超过阈值时调用摘要模型，并原样保留最近的用户轮次：
@@ -791,6 +793,7 @@ AgentKit 提供类型别名，消费者无需直接导入 eino 包：
 - **[tools](examples/tools/)** — 工具调用和进度事件
 - **[history](examples/history/)** — 导出并恢复对话历史
 - **[session](examples/session/)** — 自动持久化并跨进程恢复会话
+- **[goal](examples/goal/)** — 运行并重连持久化多步骤目标
 - **[compaction](examples/compaction/)** — 自动压缩长对话上下文
 - **[skills](examples/skills/)** — 从本地 `SKILL.md` 文件加载可复用指令
 - **[mcp](examples/mcp/)** — 连接并调用 Streamable HTTP MCP 服务器
