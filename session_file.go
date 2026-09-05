@@ -146,27 +146,35 @@ func (s *FileSessionStore) Save(ctx context.Context, session *Session) error {
 	return nil
 }
 
-// Delete 删除会话文件。会话不存在时也返回 nil。
+// Delete 删除会话及其配套的检查点、目标和工具结果。会话不存在时也会清理可识别的孤儿资源。
 func (s *FileSessionStore) Delete(ctx context.Context, id string) error {
 	if err := validateSessionContextAndID(ctx, id); err != nil {
 		return err
 	}
-	s.mu.Lock()
+	s.mu.RLock()
 	session, loadErr := s.load(id)
+	s.mu.RUnlock()
 	if errors.Is(loadErr, ErrSessionNotFound) {
 		loadErr = nil
 	}
-	if err := os.Remove(s.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		s.mu.Unlock()
-		return fmt.Errorf("agentkit: delete session %q: %w", id, err)
+	checkpointID := ""
+	if session != nil {
+		checkpointID = session.CheckpointID
 	}
-	s.mu.Unlock()
+	cleanupErr := deleteSessionResources(ctx, id, checkpointID, s.checkpoints, s.goals, s.toolResults)
+	if cleanupErr != nil {
+		return errors.Join(loadErr, cleanupErr)
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(loadErr, err)
+	}
 
-	var checkpointErr error
-	if session != nil && session.CheckpointID != "" {
-		checkpointErr = s.checkpoints.Delete(ctx, session.CheckpointID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(loadErr, fmt.Errorf("agentkit: delete session %q: %w", id, err))
 	}
-	return errors.Join(loadErr, checkpointErr)
+	return loadErr
 }
 
 // List 按更新时间从新到旧列出会话。

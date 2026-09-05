@@ -116,11 +116,14 @@ func TestToolReductionPersistsClearedContext(t *testing.T) {
 	if len(stored) != 1 {
 		t.Fatalf("cleared result count = %d, want 1: %#v", len(stored), stored)
 	}
+	if stored[0].SessionID != "session" {
+		t.Fatalf("cleared result session ID = %q, want session", stored[0].SessionID)
+	}
 	complete, err := sessions.ToolResultStore().Load(ctx, stored[0].ID)
 	if err != nil {
 		t.Fatalf("load cleared result: %v", err)
 	}
-	if complete.Content != "first payload" {
+	if complete.SessionID != "session" || complete.Content != "first payload" {
 		t.Fatalf("unexpected cleared result content: %q", complete.Content)
 	}
 

@@ -309,9 +309,9 @@ saved, err := store.Load(ctx, "user-123")
 err = store.Delete(ctx, "user-123") // 删除不存在的会话也会成功
 ```
 
-两个内置会话存储都会自动提供配套的检查点存储。因此使用文件会话时无需额外配置，Agent 或进程重建后仍可恢复 HITL 中断。待处理的中断 ID 可通过 `Agent.PendingInterrupts` 和 `Session.PendingInterrupts` 获取；成功 `Resume` 后会消费检查点，`ClearCheckpoint`、`Reset`、`SetHistory` 和删除会话都会让旧检查点失效。不使用 `Session` 时，也可以通过 `agentkit.NewFileCheckpointStore` 和 `Config.CheckPointStore` 单独启用持久化检查点。
+两个内置会话存储都会自动提供配套的检查点存储。因此使用文件会话时无需额外配置，Agent 或进程重建后仍可恢复 HITL 中断。待处理的中断 ID 可通过 `Agent.PendingInterrupts` 和 `Session.PendingInterrupts` 获取；成功 `Resume` 后会消费检查点，`ClearCheckpoint`、`Reset` 和 `SetHistory` 会让旧检查点失效。删除内置会话会级联清理它的检查点、目标和会话所属的大型工具结果；删除前应先停止使用该会话的 worker。重复删除也会继续清理可识别的孤儿目标与结果。不使用 `Session` 时，也可以通过 `agentkit.NewFileCheckpointStore` 和 `Config.CheckPointStore` 单独启用持久化检查点。
 
-它们也会提供不可变的 `ToolResultStore`，用于保存不应长期留在模型上下文里的完整工具结果。不使用会话时可直接创建 `agentkit.NewMemoryToolResultStore` 或 `agentkit.NewFileToolResultStore`；自定义会话后端可额外实现 `agentkit.ToolResultStoreProvider`。
+它们也会提供不可变的 `ToolResultStore`，用于保存不应长期留在模型上下文里的完整工具结果。压缩会自动记录 `SessionID`；手动保存且 `SessionID` 为空的结果保持独立，不会随会话删除。不使用会话时可直接创建 `agentkit.NewMemoryToolResultStore` 或 `agentkit.NewFileToolResultStore`；自定义会话后端可额外实现 `agentkit.ToolResultStoreProvider`。
 
 测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`；如需自动提供持久化检查点，可额外实现 `agentkit.CheckpointStoreProvider`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。内置存储使用 `Session.Revision` 做乐观并发控制：两个 Agent 从同一版本恢复时，陈旧写入会返回 `ErrSessionConflict`，不会静默覆盖较新的历史。自定义存储也应提供相同的 compare-and-swap 语义；分叉对话不会被擅自合并。
 
@@ -600,7 +600,7 @@ ToolReduction: &agentkit.ToolReductionConfig{}
 
 单个结果超过 50,000 字节时，会被替换为简短预览和一个不透明结果 ID。AgentKit 会自动注册安全、只读的 `read_tool_result` 工具，每次最多返回 20,000 个 Unicode 字符，并通过 `next_offset` 指示下一段位置。上下文估算超过 160,000 tokens 时，较旧的工具轮次也会被卸载，最近一轮仍保持完整。可通过 `MaxResultBytes`、`MaxContextTokens` 和 `KeepRecentToolRounds` 调整这些默认值。
 
-用户无需额外接线：压缩会优先复用 `Session` 提供的 `ToolResultStoreProvider`，否则自动使用并发安全的内存存储。因此配合 `NewFileSessionStore` 时，卸载结果会自动跨进程重启保留；只有自定义后端才需要设置 `Store`。应用可通过 `agent.ToolResultStore()` 按自己的保留策略列出或删除结果。
+用户无需额外接线：压缩会优先复用 `Session` 提供的 `ToolResultStoreProvider`，否则自动使用并发安全的内存存储。因此配合 `NewFileSessionStore` 时，卸载结果会自动跨进程重启保留；只有自定义后端才需要设置 `Store`。应用可通过 `agent.ToolResultStore()` 按自己的保留策略列出或删除独立结果；会话所属结果会由内置会话删除自动清理。
 
 启用后由 reduction 统一负责结果大小控制，`ToolPolicy` 的超时、钩子、别名等其他能力仍然生效。对于 MCP 工具，AgentKit 会关闭其默认结果上限，让完整输出进入 reduction；若用户显式设置了正数 `MCPConfig.MaxResultChars`，该上限会被保留，超出部分会按用户意图丢弃。reduction 会先于完整上下文摘要执行，避免摘要模型先吞入大块旧工具结果。
 

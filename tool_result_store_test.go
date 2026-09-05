@@ -12,7 +12,7 @@ func TestMemoryToolResultStoreIsImmutableAndCopiesResults(t *testing.T) {
 	store := NewMemoryToolResultStore()
 	older := time.Now().UTC().Add(-time.Hour)
 	newer := time.Now().UTC()
-	first := &StoredToolResult{ID: "first", Content: "complete output", CreatedAt: older}
+	first := &StoredToolResult{ID: "first", SessionID: "session", Content: "complete output", CreatedAt: older}
 	second := &StoredToolResult{ID: "second", Content: "new output", CreatedAt: newer}
 	if err := store.Save(ctx, first); err != nil {
 		t.Fatalf("save first result: %v", err)
@@ -21,12 +21,13 @@ func TestMemoryToolResultStoreIsImmutableAndCopiesResults(t *testing.T) {
 		t.Fatalf("save second result: %v", err)
 	}
 	first.Content = "mutated"
+	first.SessionID = "mutated"
 
 	loaded, err := store.Load(ctx, "first")
 	if err != nil {
 		t.Fatalf("load first result: %v", err)
 	}
-	if loaded.Content != "complete output" {
+	if loaded.Content != "complete output" || loaded.SessionID != "session" {
 		t.Fatalf("stored result was mutated: %q", loaded.Content)
 	}
 	loaded.Content = "changed again"
@@ -45,7 +46,7 @@ func TestMemoryToolResultStoreIsImmutableAndCopiesResults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list results: %v", err)
 	}
-	if len(infos) != 2 || infos[0].ID != "second" || infos[1].Size != len("complete output") {
+	if len(infos) != 2 || infos[0].ID != "second" || infos[1].SessionID != "session" || infos[1].Size != len("complete output") {
 		t.Fatalf("unexpected result list: %#v", infos)
 	}
 	if err := store.Delete(ctx, "missing"); err != nil {

@@ -160,22 +160,38 @@ func (s *MemorySessionStore) Save(ctx context.Context, session *Session) error {
 	return nil
 }
 
-// Delete 删除会话。会话不存在时也返回 nil。
+// Delete 删除会话及其配套的检查点、目标和工具结果。会话不存在时也会清理可识别的孤儿资源。
 func (s *MemorySessionStore) Delete(ctx context.Context, id string) error {
 	if err := validateSessionContextAndID(ctx, id); err != nil {
 		return err
 	}
-	s.mu.Lock()
+	s.mu.RLock()
 	var checkpointID string
 	if session := s.sessions[id]; session != nil {
 		checkpointID = session.CheckpointID
 	}
-	delete(s.sessions, id)
-	checkpoints := s.checkpoints
-	s.mu.Unlock()
-	if checkpointID != "" && checkpoints != nil {
-		return checkpoints.Delete(ctx, checkpointID)
+	var checkpoints CheckpointDeleter
+	if s.checkpoints != nil {
+		checkpoints = s.checkpoints
 	}
+	var goals GoalStore
+	if s.goals != nil {
+		goals = s.goals
+	}
+	var toolResults ToolResultStore
+	if s.toolResults != nil {
+		toolResults = s.toolResults
+	}
+	s.mu.RUnlock()
+	if err := deleteSessionResources(ctx, id, checkpointID, checkpoints, goals, toolResults); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	delete(s.sessions, id)
+	s.mu.Unlock()
 	return nil
 }
 

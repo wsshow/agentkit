@@ -73,6 +73,152 @@ func TestMemorySessionStoreCopiesAndListsSessions(t *testing.T) {
 	}
 }
 
+type sessionStoreWithResources interface {
+	SessionStore
+	CheckpointStoreProvider
+	GoalStoreProvider
+	ToolResultStoreProvider
+}
+
+func TestBuiltInSessionStoreDeleteCascadesResources(t *testing.T) {
+	tests := map[string]func(*testing.T) sessionStoreWithResources{
+		"memory": func(*testing.T) sessionStoreWithResources {
+			return NewMemorySessionStore()
+		},
+		"file": func(t *testing.T) sessionStoreWithResources {
+			store, err := NewFileSessionStore(t.TempDir())
+			if err != nil {
+				t.Fatalf("NewFileSessionStore() error = %v", err)
+			}
+			return store
+		},
+	}
+	for name, newStore := range tests {
+		t.Run(name, func(t *testing.T) {
+			testSessionStoreDeleteCascadesResources(t, newStore(t))
+		})
+	}
+}
+
+func testSessionStoreDeleteCascadesResources(t *testing.T, store sessionStoreWithResources) {
+	t.Helper()
+	ctx := context.Background()
+	const targetSession = "target-session"
+	const keptSession = "kept-session"
+	if err := store.Save(ctx, &Session{ID: targetSession, CheckpointID: "target-checkpoint"}); err != nil {
+		t.Fatalf("save target session: %v", err)
+	}
+	if err := store.Save(ctx, &Session{ID: keptSession, CheckpointID: "kept-checkpoint"}); err != nil {
+		t.Fatalf("save kept session: %v", err)
+	}
+	checkpoints := store.CheckpointStore()
+	if err := checkpoints.Set(ctx, "target-checkpoint", []byte("target")); err != nil {
+		t.Fatalf("save target checkpoint: %v", err)
+	}
+	if err := checkpoints.Set(ctx, "kept-checkpoint", []byte("kept")); err != nil {
+		t.Fatalf("save kept checkpoint: %v", err)
+	}
+	goals := store.GoalStore()
+	for _, goal := range []*Goal{
+		{ID: "target-goal", SessionID: targetSession, Objective: "delete", Status: GoalStatusPaused, MaxIterations: 2},
+		{ID: "kept-goal", SessionID: keptSession, Objective: "keep", Status: GoalStatusPaused, MaxIterations: 2},
+	} {
+		if err := goals.Save(ctx, goal); err != nil {
+			t.Fatalf("save goal %q: %v", goal.ID, err)
+		}
+	}
+	results := store.ToolResultStore()
+	for _, result := range []*StoredToolResult{
+		{ID: "target-result", SessionID: targetSession, Content: "delete"},
+		{ID: "kept-result", SessionID: keptSession, Content: "keep"},
+		{ID: "unscoped-result", Content: "keep"},
+	} {
+		if err := results.Save(ctx, result); err != nil {
+			t.Fatalf("save tool result %q: %v", result.ID, err)
+		}
+	}
+
+	if err := store.Delete(ctx, targetSession); err != nil {
+		t.Fatalf("delete target session: %v", err)
+	}
+	if _, err := store.Load(ctx, targetSession); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("target session still exists: %v", err)
+	}
+	if _, existed, err := checkpoints.Get(ctx, "target-checkpoint"); err != nil || existed {
+		t.Fatalf("target checkpoint exists = %v, error = %v", existed, err)
+	}
+	if _, err := goals.Load(ctx, "target-goal"); !errors.Is(err, ErrGoalNotFound) {
+		t.Fatalf("target goal still exists: %v", err)
+	}
+	if _, err := results.Load(ctx, "target-result"); !errors.Is(err, ErrToolResultNotFound) {
+		t.Fatalf("target tool result still exists: %v", err)
+	}
+	if _, err := store.Load(ctx, keptSession); err != nil {
+		t.Fatalf("kept session was deleted: %v", err)
+	}
+	if _, existed, err := checkpoints.Get(ctx, "kept-checkpoint"); err != nil || !existed {
+		t.Fatalf("kept checkpoint exists = %v, error = %v", existed, err)
+	}
+	if _, err := goals.Load(ctx, "kept-goal"); err != nil {
+		t.Fatalf("kept goal was deleted: %v", err)
+	}
+	for _, id := range []string{"kept-result", "unscoped-result"} {
+		if _, err := results.Load(ctx, id); err != nil {
+			t.Fatalf("tool result %q was deleted: %v", id, err)
+		}
+	}
+
+	if err := goals.Save(ctx, &Goal{
+		ID: "orphan-goal", SessionID: targetSession, Objective: "delete", Status: GoalStatusPaused, MaxIterations: 2,
+	}); err != nil {
+		t.Fatalf("save orphan goal: %v", err)
+	}
+	if err := results.Save(ctx, &StoredToolResult{
+		ID: "orphan-result", SessionID: targetSession, Content: "delete",
+	}); err != nil {
+		t.Fatalf("save orphan result: %v", err)
+	}
+	if err := store.Delete(ctx, targetSession); err != nil {
+		t.Fatalf("repeat delete target session: %v", err)
+	}
+	if _, err := goals.Load(ctx, "orphan-goal"); !errors.Is(err, ErrGoalNotFound) {
+		t.Fatalf("orphan goal still exists: %v", err)
+	}
+	if _, err := results.Load(ctx, "orphan-result"); !errors.Is(err, ErrToolResultNotFound) {
+		t.Fatalf("orphan result still exists: %v", err)
+	}
+}
+
+func TestFileSessionStoreKeepsSessionWhenResourceCleanupFails(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewFileSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileSessionStore() error = %v", err)
+	}
+	if err := store.Save(ctx, &Session{ID: "session"}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	brokenGoal := filepath.Join(store.goals.dir, "broken.json")
+	if err := os.WriteFile(brokenGoal, []byte("not JSON"), 0o600); err != nil {
+		t.Fatalf("write broken goal: %v", err)
+	}
+	if err := store.Delete(ctx, "session"); err == nil {
+		t.Fatal("delete with broken child error = nil, want error")
+	}
+	if _, err := store.Load(ctx, "session"); err != nil {
+		t.Fatalf("session was deleted after cleanup failure: %v", err)
+	}
+	if err := os.Remove(brokenGoal); err != nil {
+		t.Fatalf("remove broken goal: %v", err)
+	}
+	if err := store.Delete(ctx, "session"); err != nil {
+		t.Fatalf("retry delete session: %v", err)
+	}
+	if _, err := store.Load(ctx, "session"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("session still exists after retry: %v", err)
+	}
+}
+
 func TestFileSessionStoreRoundTripAndSafeFileName(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

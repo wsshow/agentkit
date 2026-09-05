@@ -39,14 +39,17 @@ type ToolReductionConfig struct {
 }
 
 type toolResultBackend struct {
-	store ToolResultStore
+	store     ToolResultStore
+	sessionID string
 }
 
 func (b *toolResultBackend) Write(ctx context.Context, request *filesystem.WriteRequest) error {
 	if request == nil {
 		return errors.New("agentkit: tool result write request is required")
 	}
-	if err := b.store.Save(ctx, &StoredToolResult{ID: request.FilePath, Content: request.Content}); err != nil {
+	if err := b.store.Save(ctx, &StoredToolResult{
+		ID: request.FilePath, SessionID: b.sessionID, Content: request.Content,
+	}); err != nil {
 		return fmt.Errorf("agentkit: save reduced tool result: %w", err)
 	}
 	return nil
@@ -112,8 +115,12 @@ func newToolReduction(
 		}
 		return uuid.NewString(), nil
 	}
+	sessionID := ""
+	if session != nil {
+		sessionID = session.ID
+	}
 	middleware, err := reduction.New(ctx, &reduction.Config{
-		Backend:                   &toolResultBackend{store: store},
+		Backend:                   &toolResultBackend{store: store, sessionID: sessionID},
 		ReadFileToolName:          ToolResultReadToolName,
 		GenTruncOffloadFilePath:   newResultID,
 		GenClearOffloadFilePath:   newResultID,

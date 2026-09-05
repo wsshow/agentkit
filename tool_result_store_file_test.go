@@ -16,7 +16,7 @@ func TestFileToolResultStorePersistsAndUsesSafeFileName(t *testing.T) {
 		t.Fatalf("create tool result store: %v", err)
 	}
 	id := "../../outside/result"
-	if err := store.Save(ctx, &StoredToolResult{ID: id, Content: "complete output"}); err != nil {
+	if err := store.Save(ctx, &StoredToolResult{ID: id, SessionID: "session", Content: "complete output"}); err != nil {
 		t.Fatalf("save result: %v", err)
 	}
 	if err := store.Save(ctx, &StoredToolResult{ID: id, Content: "replacement"}); !errors.Is(err, ErrToolResultExists) {
@@ -31,7 +31,7 @@ func TestFileToolResultStorePersistsAndUsesSafeFileName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load result: %v", err)
 	}
-	if loaded.Content != "complete output" || loaded.CreatedAt.IsZero() {
+	if loaded.SessionID != "session" || loaded.Content != "complete output" || loaded.CreatedAt.IsZero() {
 		t.Fatalf("unexpected restored result: %#v", loaded)
 	}
 	entries, err := os.ReadDir(dir)

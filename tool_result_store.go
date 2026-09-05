@@ -20,6 +20,7 @@ var (
 // StoredToolResult 是从模型上下文卸载的完整文本工具结果。
 type StoredToolResult struct {
 	ID        string    `json:"id"`
+	SessionID string    `json:"session_id,omitempty"` // 为空表示不随会话自动删除
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -27,6 +28,7 @@ type StoredToolResult struct {
 // ToolResultInfo 是用于结果清理和监控的轻量元数据。
 type ToolResultInfo struct {
 	ID        string    `json:"id"`
+	SessionID string    `json:"session_id,omitempty"`
 	Size      int       `json:"size"` // Content 的字节数
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -160,7 +162,7 @@ func cloneStoredToolResult(result *StoredToolResult) *StoredToolResult {
 
 func storedToolResultInfo(result *StoredToolResult) ToolResultInfo {
 	return ToolResultInfo{
-		ID: result.ID, Size: len(result.Content), CreatedAt: result.CreatedAt,
+		ID: result.ID, SessionID: result.SessionID, Size: len(result.Content), CreatedAt: result.CreatedAt,
 	}
 }
 
