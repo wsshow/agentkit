@@ -95,5 +95,6 @@ report, err := agentkit.PruneResources(ctx, store, agentkit.RetentionPolicy{
 ## 相关指南
 
 - [持久化目标](goals.md)
+- [子智能体](subagents.md)
 - [上下文管理](context.md)
 - [工具管理](tools.md)

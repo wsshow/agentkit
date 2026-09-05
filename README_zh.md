@@ -14,7 +14,7 @@ AgentKit 是一个轻量级、事件流驱动的 Go Agent 开发库，基于 [Cl
 - **易于观察** — 通过请求级事件流或全局事件观察文本、推理、工具、压缩、目标、中断和错误。
 - **适合长时间运行** — 持久化会话、检查点、目标与大型工具结果；客户端断线或进程重启后可按稳定 ID 重连。
 - **默认安全** — 内置并发运行保护、panic 隔离、有界清理、工具调用修复、结果限长和乐观并发控制。
-- **按需组合** — 技能、MCP、工具搜索、结果压缩、重试/故障转移、HITL 和多模态能力互不捆绑。
+- **按需组合** — 声明式子智能体、技能、MCP、工具搜索、结果压缩、重试/故障转移、HITL 和多模态能力互不捆绑。
 
 ## 安装
 
@@ -93,6 +93,7 @@ result, err := stream.Wait()
 | 运行方法、事件、取消、HITL、队列、多模态输入 | [运行时与事件](docs/zh/runtime.md) |
 | 进程重启后恢复对话和检查点 | [会话与持久化](docs/zh/persistence.md) |
 | 运行数小时或数天的多步骤目标，并安全重连 | [持久化目标](docs/zh/goals.md) |
+| 把专业工作委派给上下文隔离的专家 Agent | [子智能体](docs/zh/subagents.md) |
 | 让长对话保持在模型上下文窗口内 | [上下文管理](docs/zh/context.md) |
 | 按需加载可复用的 `SKILL.md` 指令 | [技能管理](docs/zh/skills.md) |
 | 连接 stdio、SSE 或 Streamable HTTP MCP 服务 | [MCP 管理](docs/zh/mcp.md) |
@@ -147,6 +148,7 @@ AgentKit 直接封装了三项真正能减少重复工作的能力，用户无�
 | [history](examples/history/) | 手动导出并恢复历史 |
 | [session](examples/session/) | 自动跨进程恢复会话 |
 | [goal](examples/goal/) | 持久化目标执行和重连 |
+| [subagents](examples/subagents/) | 声明式专家委派与关联事件 |
 | [compaction](examples/compaction/) | 自动上下文压缩 |
 | [skills](examples/skills/) | 发现并加载本地 `SKILL.md` |
 | [mcp](examples/mcp/) | Streamable HTTP MCP 集成 |

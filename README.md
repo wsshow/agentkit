@@ -14,7 +14,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **Easy to observe** — use request-scoped streams or global events for text, reasoning, tools, compaction, goals, interrupts, and errors.
 - **Easy to keep running** — persist sessions, checkpoints, goals, and large tool results; reconnect by stable IDs after a client or process restart.
 - **Safe by default** — concurrent-run protection, panic isolation, bounded cleanup, tool-call repair, result limits, and optimistic concurrency are built in.
-- **Composable when needed** — add skills, MCP servers, tool search, reduction, retry/failover, HITL, and multimodal input independently.
+- **Composable when needed** — add declarative subagents, skills, MCP servers, tool search, reduction, retry/failover, HITL, and multimodal input independently.
 
 ## Installation
 
@@ -93,6 +93,7 @@ See [Runtime and events](docs/runtime.md) for the complete run API, lifecycle ru
 | Run methods, events, cancellation, HITL, queues, multimodal input | [Runtime and events](docs/runtime.md) |
 | Restore conversations and checkpoints after restart | [Sessions and persistence](docs/persistence.md) |
 | Run a multi-step objective for hours or days and reconnect safely | [Durable goals](docs/goals.md) |
+| Delegate focused work to isolated specialist agents | [Subagents](docs/subagents.md) |
 | Keep long conversations inside the model context window | [Context management](docs/context.md) |
 | Load reusable `SKILL.md` instructions on demand | [Skills](docs/skills.md) |
 | Connect stdio, SSE, or Streamable HTTP MCP servers | [MCP](docs/mcp.md) |
@@ -147,6 +148,7 @@ See [Tool management](docs/tools.md) for defaults, ordering, and extension point
 | [history](examples/history/) | Manual history export and restore |
 | [session](examples/session/) | Automatic cross-process session restore |
 | [goal](examples/goal/) | Durable objective execution and reconnect |
+| [subagents](examples/subagents/) | Declarative specialist delegation and correlated events |
 | [compaction](examples/compaction/) | Automatic context compaction |
 | [skills](examples/skills/) | Local `SKILL.md` discovery and loading |
 | [mcp](examples/mcp/) | Streamable HTTP MCP integration |

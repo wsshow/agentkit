@@ -95,5 +95,6 @@ The zero policy deletes nothing. Pruning never deletes active, paused, or blocke
 ## Related Guides
 
 - [Durable goals](goals.md)
+- [Subagents](subagents.md)
 - [Context management](context.md)
 - [Tool management](tools.md)

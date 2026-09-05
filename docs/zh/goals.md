@@ -140,5 +140,6 @@ AgentKit 提供持久化状态、可重连 ID、恢复边界、租约和暂停/�
 ## 相关指南
 
 - [会话与持久化](persistence.md)
+- [子智能体](subagents.md)
 - [运行时与事件](runtime.md)
 - [测试](testing.md)

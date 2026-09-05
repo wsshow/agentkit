@@ -24,6 +24,12 @@ For work that may take hours or days:
 2. Use [Durable goals](goals.md) for restart and reconnect semantics.
 3. Use [MCP](mcp.md) or [Skills](skills.md) only where the task requires them.
 
+For coordinated specialist work:
+
+1. Define bounded, isolated specialists with [Subagents](subagents.md).
+2. Give each specialist only the tools and MCP servers it needs.
+3. Combine with [Durable goals](goals.md) when work must survive across step boundaries.
+
 ## Guides
 
 | Guide | Covers |
@@ -31,6 +37,7 @@ For work that may take hours or days:
 | [Runtime and events](runtime.md) | `Ask`, streams, events, lifecycle, request values, HITL, queues, multimodal input |
 | [Sessions and persistence](persistence.md) | Session restore/save, checkpoints, stores, concurrency, retention |
 | [Durable goals](goals.md) | `/goal`-style loops, async execution, reconnect, recovery, leases, idempotency |
+| [Subagents](subagents.md) | Declarative specialists, isolation, budgets, events, nested HITL and goal integration |
 | [Context management](context.md) | Full history versus model context, automatic compaction, ordering with reduction |
 | [Skills](skills.md) | Local `SKILL.md` discovery, custom backends, validation and boundaries |
 | [MCP](mcp.md) | Managed transports, tool discovery, limits, authentication, reconnection and ownership |

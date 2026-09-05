@@ -140,5 +140,6 @@ The [goal example](../examples/goal/) starts a persisted goal from command-line 
 ## Related Guides
 
 - [Sessions and persistence](persistence.md)
+- [Subagents](subagents.md)
 - [Runtime and events](runtime.md)
 - [Testing](testing.md)

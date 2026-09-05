@@ -107,6 +107,7 @@ Retry and failover callbacks are panic-isolated. Control callbacks that return e
 | `EventInterrupted` | HITL points in `Interrupt` |
 | `EventCompactionStart` / `EventCompactionEnd` | Compaction counts in `Compaction` |
 | `EventGoalUpdate` | Committed goal snapshot in `Goal` |
+| `EventDelegationStart` / `EventDelegationEnd` | Bounded subagent lifecycle in `Delegation`; terminal failure in `Error` |
 | `EventAgentEnd` | Agent execution ended |
 | `EventError` | Non-fatal or terminal error in `Error` |
 
@@ -175,4 +176,5 @@ AgentKit aliases common Eino types so applications usually need one package impo
 
 - [Sessions and persistence](persistence.md)
 - [Tool management](tools.md)
+- [Subagents](subagents.md)
 - [Testing](testing.md)

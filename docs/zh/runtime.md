@@ -107,6 +107,7 @@ result, err := agent.Ask(runCtx, "请总结这段内容")
 | `EventInterrupted` | `Interrupt` 中的 HITL 中断点 |
 | `EventCompactionStart` / `EventCompactionEnd` | `Compaction` 中的压缩数量 |
 | `EventGoalUpdate` | `Goal` 中已提交的目标快照 |
+| `EventDelegationStart` / `EventDelegationEnd` | `Delegation` 中的有界子智能体生命周期；最终失败位于 `Error` |
 | `EventAgentEnd` | Agent 执行结束 |
 | `EventError` | `Error` 中的非终止或终止错误 |
 
@@ -175,4 +176,5 @@ AgentKit 为常用 Eino 类型提供别名，应用通常只需导入一个包�
 
 - [会话与持久化](persistence.md)
 - [工具管理](tools.md)
+- [子智能体](subagents.md)
 - [测试](testing.md)
