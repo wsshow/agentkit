@@ -7,8 +7,12 @@ import (
 	"time"
 )
 
-// ErrPersistencePanic 表示自定义持久化后端在执行操作时发生 panic。
-var ErrPersistencePanic = errors.New("agentkit: persistence backend panicked")
+var (
+	// ErrPersistencePanic 表示自定义持久化后端在执行操作时发生 panic。
+	ErrPersistencePanic = errors.New("agentkit: persistence backend panicked")
+	// ErrInvalidPersistenceData 表示自定义持久化后端返回 nil、错误 ID 或无效快照。
+	ErrInvalidPersistenceData = errors.New("agentkit: persistence backend returned invalid data")
+)
 
 func callPersistence[T any](operation string, call func() (T, error)) (value T, err error) {
 	defer func() {
@@ -31,7 +35,20 @@ func doPersistence(operation string, call func() error) (err error) {
 }
 
 func sessionStoreLoad(ctx context.Context, store SessionStore, id string) (*Session, error) {
-	return callPersistence("session load", func() (*Session, error) { return store.Load(ctx, id) })
+	session, err := callPersistence("session load", func() (*Session, error) { return store.Load(ctx, id) })
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return nil, fmt.Errorf("%w: session store returned nil for %q", ErrInvalidPersistenceData, id)
+	}
+	if session.ID != id {
+		return nil, fmt.Errorf("%w: session store returned %q for requested session %q", ErrInvalidPersistenceData, session.ID, id)
+	}
+	if err := validateSession(ctx, session); err != nil {
+		return nil, fmt.Errorf("%w: invalid session %q: %w", ErrInvalidPersistenceData, id, err)
+	}
+	return cloneSession(session), nil
 }
 
 func sessionStoreSave(ctx context.Context, store SessionStore, session *Session) error {
@@ -47,7 +64,20 @@ func sessionStoreList(ctx context.Context, store SessionStore) ([]SessionInfo, e
 }
 
 func goalStoreLoad(ctx context.Context, store GoalStore, id string) (*Goal, error) {
-	return callPersistence("goal load", func() (*Goal, error) { return store.Load(ctx, id) })
+	goal, err := callPersistence("goal load", func() (*Goal, error) { return store.Load(ctx, id) })
+	if err != nil {
+		return nil, err
+	}
+	if goal == nil {
+		return nil, fmt.Errorf("%w: goal store returned nil for %q", ErrInvalidPersistenceData, id)
+	}
+	if goal.ID != id {
+		return nil, fmt.Errorf("%w: goal store returned %q for requested goal %q", ErrInvalidPersistenceData, goal.ID, id)
+	}
+	if err := validateGoal(ctx, goal); err != nil {
+		return nil, fmt.Errorf("%w: invalid goal %q: %w", ErrInvalidPersistenceData, id, err)
+	}
+	return cloneGoal(goal), nil
 }
 
 func goalStoreSave(ctx context.Context, store GoalStore, goal *Goal) error {
@@ -97,7 +127,20 @@ func deleteGoalWithLease(ctx context.Context, store GoalLeaseStore, goalID strin
 }
 
 func toolResultStoreLoad(ctx context.Context, store ToolResultStore, id string) (*StoredToolResult, error) {
-	return callPersistence("tool result load", func() (*StoredToolResult, error) { return store.Load(ctx, id) })
+	result, err := callPersistence("tool result load", func() (*StoredToolResult, error) { return store.Load(ctx, id) })
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("%w: tool result store returned nil for %q", ErrInvalidPersistenceData, id)
+	}
+	if result.ID != id {
+		return nil, fmt.Errorf("%w: tool result store returned %q for requested result %q", ErrInvalidPersistenceData, result.ID, id)
+	}
+	if err := validateStoredToolResult(ctx, result); err != nil {
+		return nil, fmt.Errorf("%w: invalid tool result %q: %w", ErrInvalidPersistenceData, id, err)
+	}
+	return cloneStoredToolResult(result), nil
 }
 
 func toolResultStoreSave(ctx context.Context, store ToolResultStore, result *StoredToolResult) error {

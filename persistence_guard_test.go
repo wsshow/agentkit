@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/cloudwego/eino/schema"
 )
 
 type panickingSessionStore struct {
@@ -95,6 +97,33 @@ func (panickingToolResultStore) List(context.Context) ([]ToolResultInfo, error) 
 	panic("broken tool result list")
 }
 
+type fixedSessionLoadStore struct {
+	*MemorySessionStore
+	loaded *Session
+}
+
+func (s *fixedSessionLoadStore) Load(context.Context, string) (*Session, error) {
+	return s.loaded, nil
+}
+
+type fixedGoalLoadStore struct {
+	*MemoryGoalStore
+	loaded *Goal
+}
+
+func (s *fixedGoalLoadStore) Load(context.Context, string) (*Goal, error) {
+	return s.loaded, nil
+}
+
+type fixedToolResultLoadStore struct {
+	*MemoryToolResultStore
+	loaded *StoredToolResult
+}
+
+func (s *fixedToolResultLoadStore) Load(context.Context, string) (*StoredToolResult, error) {
+	return s.loaded, nil
+}
+
 func TestAgentConvertsSessionStorePanics(t *testing.T) {
 	ctx := context.Background()
 	_, err := New(ctx, &Config{
@@ -171,6 +200,116 @@ func TestPersistenceProvidersAndStoresConvertPanics(t *testing.T) {
 		MemorySessionStore: NewMemorySessionStore(), list: true,
 	}, RetentionPolicy{SessionIdleTime: time.Hour}); !errors.Is(err, ErrPersistencePanic) {
 		t.Fatalf("PruneResources() error = %v, want ErrPersistencePanic", err)
+	}
+}
+
+func TestPersistenceLoadsRejectInvalidBackendData(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		load func() error
+	}{
+		{
+			name: "nil session",
+			load: func() error {
+				_, err := sessionStoreLoad(ctx, &fixedSessionLoadStore{MemorySessionStore: NewMemorySessionStore()}, "session")
+				return err
+			},
+		},
+		{
+			name: "mismatched session",
+			load: func() error {
+				_, err := sessionStoreLoad(ctx, &fixedSessionLoadStore{
+					MemorySessionStore: NewMemorySessionStore(), loaded: &Session{ID: "other"},
+				}, "session")
+				return err
+			},
+		},
+		{
+			name: "nil goal",
+			load: func() error {
+				_, err := goalStoreLoad(ctx, &fixedGoalLoadStore{MemoryGoalStore: NewMemoryGoalStore()}, "goal")
+				return err
+			},
+		},
+		{
+			name: "mismatched goal",
+			load: func() error {
+				_, err := goalStoreLoad(ctx, &fixedGoalLoadStore{
+					MemoryGoalStore: NewMemoryGoalStore(), loaded: validStoredGoal("other"),
+				}, "goal")
+				return err
+			},
+		},
+		{
+			name: "invalid goal",
+			load: func() error {
+				goal := validStoredGoal("goal")
+				goal.Status = "corrupt"
+				_, err := goalStoreLoad(ctx, &fixedGoalLoadStore{
+					MemoryGoalStore: NewMemoryGoalStore(), loaded: goal,
+				}, "goal")
+				return err
+			},
+		},
+		{
+			name: "nil tool result",
+			load: func() error {
+				_, err := toolResultStoreLoad(ctx, &fixedToolResultLoadStore{
+					MemoryToolResultStore: NewMemoryToolResultStore(),
+				}, "result")
+				return err
+			},
+		},
+		{
+			name: "mismatched tool result",
+			load: func() error {
+				_, err := toolResultStoreLoad(ctx, &fixedToolResultLoadStore{
+					MemoryToolResultStore: NewMemoryToolResultStore(), loaded: &StoredToolResult{ID: "other"},
+				}, "result")
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.load(); !errors.Is(err, ErrInvalidPersistenceData) {
+				t.Fatalf("load error = %v, want ErrInvalidPersistenceData", err)
+			}
+		})
+	}
+}
+
+func TestPersistenceLoadsCloneBackendSnapshots(t *testing.T) {
+	ctx := context.Background()
+	sessionSource := &Session{ID: "session", Messages: []*schema.Message{schema.UserMessage("original")}}
+	session, err := sessionStoreLoad(ctx, &fixedSessionLoadStore{
+		MemorySessionStore: NewMemorySessionStore(), loaded: sessionSource,
+	}, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.Messages[0].Content = "changed"
+	if sessionSource.Messages[0].Content != "original" {
+		t.Fatal("session load retained backend-owned message data")
+	}
+
+	goalSource := validStoredGoal("goal")
+	goal, err := goalStoreLoad(ctx, &fixedGoalLoadStore{
+		MemoryGoalStore: NewMemoryGoalStore(), loaded: goalSource,
+	}, "goal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goal.Objective = "changed"
+	if goalSource.Objective != "work" {
+		t.Fatal("goal load retained backend-owned goal data")
+	}
+}
+
+func validStoredGoal(id string) *Goal {
+	return &Goal{
+		ID: id, SessionID: "session", Objective: "work", Status: GoalStatusActive, MaxIterations: 1,
 	}
 }
 
