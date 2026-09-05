@@ -98,6 +98,7 @@ type Agent struct {
 	name            string
 	model           ChatModel
 	modelRetry      *ModelRetryConfig
+	modelFailover   *ModelFailoverConfig
 	runner          *adk.Runner
 	state           *State
 	emtr            *emitter
@@ -191,15 +192,16 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 
 	a := &Agent{
-		name:         cfg.Name,
-		model:        cfg.Model,
-		modelRetry:   cfg.ModelRetryConfig,
-		state:        newState(),
-		emtr:         newEmitter(),
-		checkPointID: checkPointID,
-		steeringMode: QueueModeOneAtATime,
-		followUpMode: QueueModeOneAtATime,
-		toolCalls:    make(map[string]toolCallInfo),
+		name:          cfg.Name,
+		model:         cfg.Model,
+		modelRetry:    cfg.ModelRetryConfig,
+		modelFailover: cfg.ModelFailoverConfig,
+		state:         newState(),
+		emtr:          newEmitter(),
+		checkPointID:  checkPointID,
+		steeringMode:  QueueModeOneAtATime,
+		followUpMode:  QueueModeOneAtATime,
+		toolCalls:     make(map[string]toolCallInfo),
 	}
 	if loadedSession != nil {
 		a.sessionStore = cfg.Session.Store

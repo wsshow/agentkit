@@ -71,22 +71,27 @@ func (f GoalEvaluatorFunc) Evaluate(ctx context.Context, evaluation GoalEvaluati
 
 // ModelGoalEvaluator 使用聊天模型判断目标是否完成。
 type ModelGoalEvaluator struct {
-	model      ChatModel
-	modelRetry *ModelRetryConfig
+	model         ChatModel
+	modelRetry    *ModelRetryConfig
+	modelFailover *ModelFailoverConfig
 }
 
 var _ GoalEvaluator = (*ModelGoalEvaluator)(nil)
 
 // NewModelGoalEvaluator 创建模型目标判断器。
 func NewModelGoalEvaluator(model ChatModel) (*ModelGoalEvaluator, error) {
-	return newModelGoalEvaluator(model, nil)
+	return newModelGoalEvaluator(model, nil, nil)
 }
 
-func newModelGoalEvaluator(model ChatModel, retry *ModelRetryConfig) (*ModelGoalEvaluator, error) {
+func newModelGoalEvaluator(
+	model ChatModel,
+	retry *ModelRetryConfig,
+	failover *ModelFailoverConfig,
+) (*ModelGoalEvaluator, error) {
 	if model == nil {
 		return nil, errors.New("agentkit: goal evaluator model is required")
 	}
-	return &ModelGoalEvaluator{model: model, modelRetry: retry}, nil
+	return &ModelGoalEvaluator{model: model, modelRetry: retry, modelFailover: failover}, nil
 }
 
 // Evaluate 要求模型仅返回结构化的目标判断结果。
@@ -103,7 +108,7 @@ func (e *ModelGoalEvaluator) Evaluate(ctx context.Context, evaluation GoalEvalua
 			"<result>\n%s\n</result>\n\nIteration: %d",
 		evaluation.Objective, evaluation.SuccessCriteria, evaluation.LastResponse, evaluation.Iteration,
 	)
-	message, err := generateModelWithRetry(ctx, e.model, []*schema.Message{
+	message, err := generateModelWithFailover(ctx, e.model, []*schema.Message{
 		schema.SystemMessage("You are a strict completion evaluator for a durable agent goal. " +
 			"Decide whether the result provides concrete evidence that the objective and every stated " +
 			"success criterion are satisfied. Do not perform the task. Return exactly one JSON object " +
@@ -111,7 +116,7 @@ func (e *ModelGoalEvaluator) Evaluate(ctx context.Context, evaluation GoalEvalua
 			"\"next_prompt\":\"specific next action\"}. Set next_prompt to an empty string only " +
 			"when complete is true."),
 		schema.UserMessage(prompt),
-	}, e.modelRetry)
+	}, e.modelRetry, e.modelFailover)
 	if err != nil {
 		return GoalDecision{}, fmt.Errorf("agentkit: evaluate goal: %w", err)
 	}
@@ -224,7 +229,7 @@ func NewGoalRunner(agent *Agent, cfg *GoalRunnerConfig) (*GoalRunner, error) {
 	evaluator := cfg.Evaluator
 	if evaluator == nil {
 		var err error
-		evaluator, err = newModelGoalEvaluator(agent.model, agent.modelRetry)
+		evaluator, err = newModelGoalEvaluator(agent.model, agent.modelRetry, agent.modelFailover)
 		if err != nil {
 			return nil, err
 		}

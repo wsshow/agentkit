@@ -539,6 +539,63 @@ func TestGoalRunnerEvaluationRetryHonorsShouldRetry(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerEvaluationRetriesBeforeModelFailover(t *testing.T) {
+	ctx := context.Background()
+	primaryErr := errors.New("primary unavailable")
+	primary := NewMockChatModel(
+		MockModelText("work completed"),
+		MockModelError(primaryErr),
+		MockModelError(primaryErr),
+	)
+	backup := NewMockChatModel(
+		MockModelText(`{"complete":true,"reason":"verified by backup","next_prompt":""}`),
+	)
+	var failoverCalls int
+	agent, err := New(ctx, &Config{
+		Name:  "worker",
+		Model: primary,
+		ModelRetryConfig: &ModelRetryConfig{
+			MaxRetries:  1,
+			BackoffFunc: func(context.Context, int) time.Duration { return 0 },
+		},
+		ModelFailoverConfig: &ModelFailoverConfig{
+			MaxRetries: 1,
+			ShouldFailover: func(_ context.Context, _ *schema.Message, err error) bool {
+				var exhausted *adk.RetryExhaustedError
+				return errors.As(err, &exhausted) && errors.Is(exhausted.LastErr, primaryErr)
+			},
+			GetFailoverModel: func(_ context.Context, failover *adk.FailoverContext[*schema.Message]) (ChatModel, []*schema.Message, error) {
+				failoverCalls++
+				if failover.FailoverAttempt != 1 {
+					t.Fatalf("failover attempt = %d, want 1", failover.FailoverAttempt)
+				}
+				return backup, nil, nil
+			},
+		},
+		Session: &SessionConfig{ID: "evaluation-failover", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, nil)
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+
+	result, err := runner.Start(ctx, GoalRequest{ID: "failover", Objective: "finish work"})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if result.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("goal = %#v, want completed", result.Goal)
+	}
+	if len(primary.Calls()) != 3 || len(backup.Calls()) != 1 || failoverCalls != 1 {
+		t.Fatalf("model calls = primary %d, backup %d, failover %d; want 3, 1, 1",
+			len(primary.Calls()), len(backup.Calls()), failoverCalls)
+	}
+}
+
 func TestNewGoalRunnerRequiresSession(t *testing.T) {
 	ctx := context.Background()
 	agent, err := New(ctx, &Config{Name: "worker", Model: NewMockChatModel()})
