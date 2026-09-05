@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,30 @@ func TestMemorySessionStoreCopiesAndListsSessions(t *testing.T) {
 	}
 	if _, err := store.Load(ctx, "older"); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("Load() after delete error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestSessionStoresRejectAmbiguousIDs(t *testing.T) {
+	constructors := map[string]func(*testing.T) SessionStore{
+		"memory": func(*testing.T) SessionStore { return NewMemorySessionStore() },
+		"file": func(t *testing.T) SessionStore {
+			store, err := NewFileSessionStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			return store
+		},
+	}
+	for name, construct := range constructors {
+		t.Run(name, func(t *testing.T) {
+			store := construct(t)
+			if _, err := store.Load(context.Background(), " session "); err == nil || !strings.Contains(err.Error(), "surrounding whitespace") {
+				t.Fatalf("Load() error = %v, want surrounding whitespace error", err)
+			}
+			if err := store.Save(context.Background(), &Session{ID: "\t"}); err == nil || !strings.Contains(err.Error(), "session ID is required") {
+				t.Fatalf("Save() error = %v, want required ID error", err)
+			}
+		})
 	}
 }
 

@@ -847,16 +847,6 @@ func (m *SessionManager) finishClose() {
 	m.mu.Unlock()
 }
 
-func validateManagedSessionID(id string) error {
-	if strings.TrimSpace(id) == "" {
-		return errors.New("agentkit: session ID is required")
-	}
-	if id != strings.TrimSpace(id) {
-		return errors.New("agentkit: session ID must not have surrounding whitespace")
-	}
-	return nil
-}
-
 func normalizeSessionMetadata(metadata SessionMetadata) (SessionMetadata, error) {
 	metadata.Title = strings.TrimSpace(metadata.Title)
 	if metadata.OwnerID != strings.TrimSpace(metadata.OwnerID) {

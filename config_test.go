@@ -57,6 +57,15 @@ func TestNewValidatesConfig(t *testing.T) {
 			want: "session ID is required",
 		},
 		{
+			name: "session ID with surrounding whitespace",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model:   NewMockChatModel(),
+				Session: &SessionConfig{ID: " session-1 ", Store: NewMemorySessionStore()},
+			},
+			want: "session ID must not have surrounding whitespace",
+		},
+		{
 			name: "nil session store",
 			ctx:  context.Background(),
 			cfg: &Config{

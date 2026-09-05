@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -234,8 +235,15 @@ func validateSessionContextAndID(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if id == "" {
+	return validateManagedSessionID(id)
+}
+
+func validateManagedSessionID(id string) error {
+	if strings.TrimSpace(id) == "" {
 		return errors.New("agentkit: session ID is required")
+	}
+	if id != strings.TrimSpace(id) {
+		return errors.New("agentkit: session ID must not have surrounding whitespace")
 	}
 	return nil
 }

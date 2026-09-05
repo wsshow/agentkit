@@ -405,8 +405,8 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("agentkit: persistence timeout must not be negative: %s", cfg.PersistenceTimeout)
 	}
 	if cfg.Session != nil {
-		if cfg.Session.ID == "" {
-			return errors.New("agentkit: session ID is required")
+		if err := validateManagedSessionID(cfg.Session.ID); err != nil {
+			return err
 		}
 		if cfg.Session.Store == nil {
 			return errors.New("agentkit: session store is required")
