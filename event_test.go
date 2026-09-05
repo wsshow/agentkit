@@ -43,6 +43,7 @@ func TestEmitterIsolatesMutableEventFields(t *testing.T) {
 		Interrupt:    []InterruptPoint{{ID: "interrupt-1"}},
 		Compaction:   &CompactionInfo{MessagesBefore: 10, MessagesAfter: 4},
 		Goal:         &Goal{ID: "goal-1", Objective: "original"},
+		Delegation:   &DelegationInfo{ID: "delegation-1", Path: []string{"parent", "child"}},
 	}
 
 	emitter.Subscribe(func(event Event) {
@@ -52,6 +53,7 @@ func TestEmitterIsolatesMutableEventFields(t *testing.T) {
 		event.Interrupt[0].ID = "mutated"
 		event.Compaction.MessagesAfter = 99
 		event.Goal.Objective = "mutated"
+		event.Delegation.Path[0] = "mutated"
 	})
 	emitter.Subscribe(func(event Event) {
 		assertOriginalEvent(t, event)
@@ -111,5 +113,8 @@ func assertOriginalEvent(t *testing.T, event Event) {
 	}
 	if got := event.Goal.Objective; got != "original" {
 		t.Fatalf("goal objective = %q, want original", got)
+	}
+	if got := event.Delegation.Path[0]; got != "parent" {
+		t.Fatalf("delegation path = %#v, want parent first", event.Delegation.Path)
 	}
 }

@@ -29,6 +29,8 @@ const (
 	EventCompactionStart EventType = "compaction_start" // 上下文压缩开始
 	EventCompactionEnd   EventType = "compaction_end"   // 上下文压缩完成
 	EventGoalUpdate      EventType = "goal_update"      // Goal 状态已持久化
+	EventDelegationStart EventType = "delegation_start" // 子 Agent 委派开始
+	EventDelegationEnd   EventType = "delegation_end"   // 子 Agent 委派结束
 	EventAgentEnd        EventType = "agent_end"        // Agent 处理完成
 	EventError           EventType = "error"            // 错误
 )
@@ -49,6 +51,7 @@ type Event struct {
 	Interrupt        []InterruptPoint // 中断点列表（interrupted）
 	Compaction       *CompactionInfo  // 上下文压缩信息（compaction_start / compaction_end）
 	Goal             *Goal            // 已持久化的目标快照（goal_update）
+	Delegation       *DelegationInfo  // 子 Agent 委派信息（delegation_start / delegation_end 及子 Agent 事件）
 	Error            error            // 错误信息（error）
 }
 
@@ -117,7 +120,7 @@ func (e *emitter) Emit(event Event) {
 		return
 	}
 	diagnostic := Event{
-		Type: EventError, Agent: event.Agent, Error: errors.Join(panicErrs...),
+		Type: EventError, Agent: event.Agent, Delegation: cloneDelegation(event.Delegation), Error: errors.Join(panicErrs...),
 	}
 	for index, fn := range subs {
 		if _, panicked := failed[index]; panicked {
@@ -147,7 +150,16 @@ func cloneEvent(event Event) Event {
 		out.Compaction = &compaction
 	}
 	out.Goal = cloneGoal(event.Goal)
+	out.Delegation = cloneDelegation(event.Delegation)
 	return out
+}
+
+func cloneDelegation(info *DelegationInfo) *DelegationInfo {
+	if info == nil {
+		return nil
+	}
+	cloned := cloneDelegationInfo(*info)
+	return &cloned
 }
 
 func cloneInterruptPoints(points []InterruptPoint) []InterruptPoint {

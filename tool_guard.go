@@ -116,7 +116,11 @@ func emitToolPolicyError(ctx context.Context, err error) {
 		return
 	}
 	agentName, _ := ctx.Value(agentNameCtxKey{}).(string)
-	emitter.Emit(Event{Type: EventError, Agent: agentName, Error: err})
+	event := Event{Type: EventError, Agent: agentName, Error: err}
+	if agent, _ := ctx.Value(agentCtxKey{}).(*Agent); agent != nil {
+		event.Delegation = agent.delegationForAgent(agentName, nil)
+	}
+	emitter.Emit(event)
 }
 
 func invocationFromInput(input *compose.ToolInput) ToolInvocation {

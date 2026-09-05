@@ -178,6 +178,12 @@ func (a *Agent) hasSteering() bool {
 
 // processEvent 将底层事件转换为统一事件。
 func (a *Agent) processEvent(ctx context.Context, event *adk.AgentEvent) error {
+	if event == nil {
+		return nil
+	}
+	if a.subAgents != nil && a.subAgents.hasAgent(event.AgentName) {
+		return a.processSubAgentEvent(ctx, event)
+	}
 	agentName := event.AgentName
 
 	if event.Err != nil {
@@ -243,6 +249,11 @@ func (a *Agent) processMessage(agentName string, msg adk.Message) {
 		if msg.ToolName != "" {
 			toolName = msg.ToolName
 		}
+		var delegation *DelegationInfo
+		var delegationErr error
+		if a.subAgents != nil {
+			delegation, delegationErr, _ = a.subAgents.finish(msg.ToolCallID)
+		}
 		a.emtr.Emit(Event{
 			Type:          EventToolEnd,
 			Agent:         agentName,
@@ -250,9 +261,18 @@ func (a *Agent) processMessage(agentName string, msg adk.Message) {
 			ToolCallID:    msg.ToolCallID,
 			ToolName:      toolName,
 			ToolArguments: arguments,
+			Delegation:    delegation,
 		})
 		a.emitMessageStart(agentName, RoleTool, msg.Content)
 		a.emitMessageEnd(agentName, RoleTool, msg.Content, "", nil)
+		if delegation != nil {
+			a.emtr.Emit(Event{
+				Type:       EventDelegationEnd,
+				Agent:      delegation.Agent,
+				Delegation: delegation,
+				Error:      delegationErr,
+			})
+		}
 		if a.clearToolCall(msg.ToolCallID) {
 			a.endTurn()
 			a.completeToolBatch()

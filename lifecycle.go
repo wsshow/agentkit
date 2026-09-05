@@ -74,8 +74,16 @@ func (a *Agent) emitToolStart(agentName string, calls []schema.ToolCall) {
 	if len(calls) == 0 {
 		return
 	}
+	var delegations []DelegationInfo
+	if a.subAgents != nil {
+		delegations = a.subAgents.prepare(calls)
+	}
 	a.recordToolCalls(calls)
 	a.emtr.Emit(Event{Type: EventToolStart, Agent: agentName, ToolCalls: calls})
+	for _, info := range delegations {
+		info := info
+		a.emtr.Emit(Event{Type: EventDelegationStart, Agent: info.Agent, Delegation: &info})
+	}
 	a.markToolCallsStarted(calls)
 }
 
@@ -117,6 +125,9 @@ func (a *Agent) prepareToolBatch(calls []schema.ToolCall) {
 		a.toolBatchDoneFlag = false
 	}
 	a.mu.Unlock()
+	if a.subAgents != nil {
+		a.subAgents.prepare(calls)
+	}
 	a.recordToolCalls(calls)
 }
 

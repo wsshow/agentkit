@@ -46,6 +46,9 @@ func (a *Agent) resultSince(historyOffset int) *RunResult {
 			result.Usage = addTokenUsage(result.Usage, message.ResponseMeta.Usage)
 		}
 	}
+	if a.subAgents != nil {
+		result.Usage = addTokenUsage(result.Usage, a.subAgents.runUsage())
+	}
 	if result.Response != nil {
 		result.Text = result.Response.Content
 		result.ReasoningContent = result.Response.ReasoningContent

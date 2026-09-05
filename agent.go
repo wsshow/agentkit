@@ -54,20 +54,28 @@ func EmitToolUpdate(ctx context.Context, content string) {
 	toolName, arguments := "", ""
 	if a, _ := ctx.Value(agentCtxKey{}).(*Agent); a != nil {
 		var ok bool
-		toolName, arguments, ok = a.waitToolCallInfo(ctx, callID)
+		if a.subAgents != nil && a.subAgents.hasAgent(name) {
+			toolName, arguments, ok = a.subAgents.waitNestedTool(ctx, name, callID)
+		} else {
+			toolName, arguments, ok = a.waitToolCallInfo(ctx, callID)
+		}
 		if !ok {
 			return
 		}
 	}
 	if e != nil {
-		e.Emit(Event{
+		event := Event{
 			Type:          EventToolUpdate,
 			Agent:         name,
 			Content:       content,
 			ToolCallID:    callID,
 			ToolName:      toolName,
 			ToolArguments: arguments,
-		})
+		}
+		if a, _ := ctx.Value(agentCtxKey{}).(*Agent); a != nil {
+			event.Delegation = a.delegationForAgent(name, nil)
+		}
+		e.Emit(event)
 	}
 }
 
@@ -92,6 +100,8 @@ type Config struct {
 	MCP                 *MCPConfig                 // 自动连接并管理 MCP 服务器（可选）
 	ToolSearch          *ToolSearchConfig          // 大型工具集按需搜索（可选）
 	ToolReduction       *ToolReductionConfig       // 大型工具结果持久化卸载与按需回取（可选）
+	SubAgents           []SubAgentConfig           // 独立上下文的声明式子 Agent（可选）
+	SubAgentPolicy      *SubAgentPolicy            // 子 Agent 委派次数、并发与超时策略（可选）
 }
 
 // Agent 提供事件流驱动的交互能力。
@@ -106,6 +116,7 @@ type Agent struct {
 	checkPointID       string // 每个 Agent 实例唯一的 CheckPoint ID
 	checkpointStore    CheckpointStore
 	toolResultStore    ToolResultStore
+	subAgents          *subAgentRuntime
 	persistenceTimeout time.Duration
 
 	mu       sync.Mutex
@@ -210,6 +221,9 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		followUpMode:       QueueModeOneAtATime,
 		toolCalls:          make(map[string]toolCallInfo),
 	}
+	if len(cfg.SubAgents) > 0 {
+		a.subAgents = newSubAgentRuntime(a, cfg.Name, cfg.SubAgents, cfg.SubAgentPolicy)
+	}
 	a.modelRetry = guardedModelRetryConfig(a, cfg.ModelRetryConfig)
 	a.modelFailover = guardedModelFailoverConfig(a, cfg.ModelFailoverConfig)
 	if loadedSession != nil {
@@ -285,6 +299,14 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		mcpConnections = connections
 		tools = append(tools, mcpTools...)
 	}
+	if len(cfg.SubAgents) > 0 {
+		subAgentTools, childConnections, err := buildSubAgentTools(ctx, a, cfg.SubAgents)
+		if err != nil {
+			return nil, errors.Join(err, closeMCPConnectionsAfterInitialization(ctx, cfg.MCP, mcpConnections))
+		}
+		mcpConnections = append(mcpConnections, childConnections...)
+		tools = append(tools, subAgentTools...)
+	}
 	allTools := append(append([]Tool(nil), tools...), dynamicTools(cfg.ToolSearch)...)
 	if err := validateCombinedToolNames(ctx, allTools, cfg.Skills); err != nil {
 		return nil, errors.Join(err, closeMCPConnectionsAfterInitialization(ctx, cfg.MCP, mcpConnections))
@@ -298,6 +320,9 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 	if cfg.ToolSearch != nil {
 		knownToolNames[toolSearchToolName] = struct{}{}
+	}
+	if a.subAgents != nil {
+		a.subAgents.registerAliases(cfg.ToolPolicy)
 	}
 	a.knownToolNames = knownToolNames
 
@@ -315,7 +340,8 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	effectiveToolPolicy := toolPolicyForReduction(cfg.ToolPolicy, cfg.ToolReduction != nil)
 	if len(tools) > 0 || effectiveToolPolicy != nil || cfg.Skills != nil || cfg.ToolSearch != nil {
 		agentCfg.ToolsConfig = adk.ToolsConfig{
-			ToolsNodeConfig: effectiveToolPolicy.toolsNodeConfig(tools),
+			ToolsNodeConfig:    effectiveToolPolicy.toolsNodeConfig(tools),
+			EmitInternalEvents: a.subAgents != nil,
 		}
 	}
 
@@ -395,6 +421,9 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 		return err
 	}
 	if err := validateToolReductionConfig(cfg.ToolReduction); err != nil {
+		return err
+	}
+	if err := validateSubAgentConfig(cfg.Name, cfg.SubAgents, cfg.SubAgentPolicy); err != nil {
 		return err
 	}
 	return nil
@@ -897,6 +926,9 @@ func (a *Agent) startFreshRun(ctx context.Context) (context.Context, error) {
 		a.endRun()
 		return nil, err
 	}
+	if a.subAgents != nil {
+		a.subAgents.resetBudget()
+	}
 	return runCtx, nil
 }
 
@@ -917,6 +949,9 @@ func (a *Agent) startRun(ctx context.Context) (context.Context, error) {
 		return nil, err
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	if a.subAgents != nil {
+		a.subAgents.resetUsage()
+	}
 	a.running = true
 	a.runInterrupted = false
 	a.done = make(chan struct{})
