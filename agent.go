@@ -650,6 +650,15 @@ func (a *Agent) Cancel() {
 // Abort 取消当前执行并等待完成。
 // Subscribe 回调与执行处于同一 goroutine，回调内请使用 Cancel 以避免等待自身。
 func (a *Agent) Abort() {
+	_ = a.AbortContext(context.Background())
+}
+
+// AbortContext 取消当前执行，并等待它退出或 ctx 结束。
+// 返回 context.Canceled 或 context.DeadlineExceeded 只表示等待提前结束；取消请求仍已发出。
+func (a *Agent) AbortContext(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("agentkit: context is required")
+	}
 	a.mu.Lock()
 	cancel := a.cancelFn
 	done := a.done
@@ -659,8 +668,13 @@ func (a *Agent) Abort() {
 		cancel()
 	}
 	if done != nil {
-		<-done
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	return nil
 }
 
 // Close 关闭 Agent，释放资源。实现 io.Closer 接口。

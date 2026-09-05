@@ -1042,6 +1042,47 @@ func TestAgentAbortCanCancelBeforeIterationStarts(t *testing.T) {
 	}
 }
 
+func TestAgentAbortContextBoundsNonCooperativeRun(t *testing.T) {
+	agent, err := New(context.Background(), &Config{
+		Name:  "assistant",
+		Model: NewMockChatModel(MockModelText("unused")),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer agent.Close()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	agent.Subscribe(func(event Event) {
+		if event.Type == EventAgentStart {
+			close(started)
+			<-release
+		}
+	})
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- agent.Prompt(context.Background(), "abort me")
+	}()
+	<-started
+
+	waitCtx, cancelWait := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	err = agent.AbortContext(waitCtx)
+	cancelWait()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("AbortContext() error = %v, want context.DeadlineExceeded", err)
+	}
+	close(release)
+	select {
+	case err := <-runDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Prompt() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Prompt() did not observe the cancellation request")
+	}
+}
+
 func TestAgentRunningRejectsConcurrentPrompt(t *testing.T) {
 	ctx := context.Background()
 	started := make(chan struct{})

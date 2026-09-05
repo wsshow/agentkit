@@ -234,6 +234,9 @@ agent.Cancel()
 // 取消当前执行并等待完成（请在订阅回调外调用）
 agent.Abort()
 
+// 或使用 context 限制优雅停机的等待时间
+err := agent.AbortContext(shutdownCtx)
+
 // 重置 Agent 状态（等待完成后清空历史和队列）
 agent.Reset()
 
@@ -260,6 +263,8 @@ agent.Close()
 ```
 
 > `Prompt`、`Send`、`Continue`、`Resume` 互斥执行。可通过 `errors.Is(err, agentkit.ErrAgentRunning)` 判断并发执行错误。发生 HITL 中断后应先调用 `Resume`；在检查点被恢复或清理前，新执行会返回 `agentkit.ErrResumeRequired`，避免未完成的工具操作被悄悄丢弃。
+
+`AbortContext` 总会先发出取消请求，再限制等待时间。如果自定义模型或工具忽略 context，该方法可能在返回停机 context 错误时，底层代码仍在退出过程中；Agent 会保持占用状态，直到本次运行真正结束。
 
 ### 请求级配置
 
