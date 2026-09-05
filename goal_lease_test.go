@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+type stuckGoalLeaseReleaseStore struct {
+	*MemoryGoalStore
+	release chan struct{}
+}
+
+func (s *stuckGoalLeaseReleaseStore) ReleaseGoalLease(context.Context, *GoalLease) error {
+	<-s.release
+	return nil
+}
+
 func TestMemoryGoalLeaseAcquisitionRenewalAndFencing(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
@@ -155,5 +165,49 @@ func TestMemoryGoalDeleteRemovesLease(t *testing.T) {
 	}
 	if _, err := store.AcquireGoalLease(ctx, lease.GoalID, "worker-2", time.Minute); err != nil {
 		t.Fatalf("acquire lease after delete: %v", err)
+	}
+}
+
+func TestGoalLeaseHeartbeatStopIsBounded(t *testing.T) {
+	heartbeat := &goalLeaseHeartbeat{
+		stopCh: make(chan struct{}),
+		done:   make(chan struct{}),
+	}
+	release := make(chan struct{})
+	go func() {
+		<-heartbeat.stopCh
+		<-release
+		close(heartbeat.done)
+	}()
+	defer close(release)
+
+	started := time.Now()
+	err := heartbeat.stop(10 * time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stop error = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("heartbeat stop took too long: %s", elapsed)
+	}
+}
+
+func TestGoalLeaseHeartbeatStopTimeoutIsBounded(t *testing.T) {
+	if got := goalLeaseHeartbeatStopTimeout(time.Millisecond); got != goalLeaseHeartbeatStopMinWait {
+		t.Fatalf("short lease stop timeout = %s, want %s", got, goalLeaseHeartbeatStopMinWait)
+	}
+	if got := goalLeaseHeartbeatStopTimeout(time.Hour); got != goalLeaseHeartbeatStopMaxWait {
+		t.Fatalf("long lease stop timeout = %s, want %s", got, goalLeaseHeartbeatStopMaxWait)
+	}
+}
+
+func TestGoalLeaseReleaseIsBounded(t *testing.T) {
+	store := &stuckGoalLeaseReleaseStore{
+		MemoryGoalStore: NewMemoryGoalStore(),
+		release:         make(chan struct{}),
+	}
+	defer close(store.release)
+	err := releaseGoalLease(context.Background(), store, &GoalLease{GoalID: "goal"}, 10*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("release error = %v, want context.DeadlineExceeded", err)
 	}
 }

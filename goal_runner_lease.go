@@ -8,7 +8,11 @@ import (
 	"time"
 )
 
-const goalLeaseReleaseTimeout = 5 * time.Second
+const (
+	goalLeaseReleaseTimeout       = 5 * time.Second
+	goalLeaseHeartbeatStopMinWait = 100 * time.Millisecond
+	goalLeaseHeartbeatStopMaxWait = 5 * time.Second
+)
 
 type goalLeaseHeartbeat struct {
 	stopOnce sync.Once
@@ -71,15 +75,24 @@ func (r *GoalRunner) startLeaseHeartbeat(
 	return heartbeat
 }
 
-func (h *goalLeaseHeartbeat) stop() error {
+func (h *goalLeaseHeartbeat) stop(timeout time.Duration) error {
 	if h == nil || h.done == nil {
 		return nil
 	}
+	if timeout <= 0 {
+		timeout = goalLeaseHeartbeatStopMinWait
+	}
 	h.stopOnce.Do(func() { close(h.stopCh) })
-	<-h.done
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.err
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-h.done:
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.err
+	case <-timer.C:
+		return fmt.Errorf("agentkit: stop goal lease heartbeat: %w", context.DeadlineExceeded)
+	}
 }
 
 func (h *goalLeaseHeartbeat) setError(err error) {
@@ -94,10 +107,37 @@ func (r *GoalRunner) releaseLease(ctx context.Context, lease *GoalLease) error {
 	if r.leaseStore == nil || lease == nil {
 		return nil
 	}
-	releaseCtx, cancel := context.WithTimeout(ctx, goalLeaseReleaseTimeout)
-	defer cancel()
-	if err := r.leaseStore.ReleaseGoalLease(releaseCtx, lease); err != nil {
-		return fmt.Errorf("agentkit: release goal lease: %w", err)
+	return releaseGoalLease(ctx, r.leaseStore, lease, goalLeaseReleaseTimeout)
+}
+
+func releaseGoalLease(ctx context.Context, store GoalLeaseStore, lease *GoalLease, timeout time.Duration) error {
+	if ctx == nil {
+		ctx = context.TODO()
 	}
-	return nil
+	releaseCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	released := make(chan error, 1)
+	go func() {
+		released <- store.ReleaseGoalLease(releaseCtx, lease)
+	}()
+	select {
+	case err := <-released:
+		if err != nil {
+			return fmt.Errorf("agentkit: release goal lease: %w", err)
+		}
+		return nil
+	case <-releaseCtx.Done():
+		return fmt.Errorf("agentkit: release goal lease: %w", releaseCtx.Err())
+	}
+}
+
+func goalLeaseHeartbeatStopTimeout(leaseDuration time.Duration) time.Duration {
+	timeout := leaseDuration / 3
+	if timeout < goalLeaseHeartbeatStopMinWait {
+		return goalLeaseHeartbeatStopMinWait
+	}
+	if timeout > goalLeaseHeartbeatStopMaxWait {
+		return goalLeaseHeartbeatStopMaxWait
+	}
+	return timeout
 }

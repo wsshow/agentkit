@@ -557,7 +557,7 @@ func (r *GoalRunner) begin(ctx context.Context, id string) (context.Context, fun
 	r.activeMu.Unlock()
 	finish := func() error {
 		cancel()
-		heartbeatErr := heartbeat.stop()
+		heartbeatErr := heartbeat.stop(goalLeaseHeartbeatStopTimeout(r.leaseDuration))
 		r.activeMu.Lock()
 		r.activeID = ""
 		r.cancel = nil
