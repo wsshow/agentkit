@@ -168,6 +168,19 @@ func storedToolResultInfo(result *StoredToolResult) ToolResultInfo {
 	}
 }
 
+func validateToolResultInfo(info ToolResultInfo) error {
+	if strings.TrimSpace(info.ID) == "" {
+		return errors.New("tool result ID is required")
+	}
+	if info.Size < 0 {
+		return errors.New("tool result size must not be negative")
+	}
+	if info.CreatedAt.IsZero() {
+		return errors.New("tool result creation time is required")
+	}
+	return nil
+}
+
 func sortToolResultInfos(infos []ToolResultInfo) {
 	sort.SliceStable(infos, func(i, j int) bool {
 		if infos[i].CreatedAt.Equal(infos[j].CreatedAt) {

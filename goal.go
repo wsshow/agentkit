@@ -274,6 +274,31 @@ func goalInfo(goal *Goal) GoalInfo {
 	}
 }
 
+func validateGoalInfo(info GoalInfo) error {
+	if strings.TrimSpace(info.ID) == "" {
+		return errors.New("goal ID is required")
+	}
+	if strings.TrimSpace(info.SessionID) == "" {
+		return errors.New("goal session ID is required")
+	}
+	if strings.TrimSpace(info.Objective) == "" {
+		return errors.New("goal objective is required")
+	}
+	if !validGoalStatus(info.Status) {
+		return fmt.Errorf("invalid goal status %q", info.Status)
+	}
+	if info.Iteration < 0 || info.AttemptIteration < 0 {
+		return errors.New("goal iterations must not be negative")
+	}
+	if info.MaxIterations <= 0 {
+		return errors.New("goal max iterations must be positive")
+	}
+	if info.UpdatedAt.IsZero() {
+		return errors.New("goal update time is required")
+	}
+	return nil
+}
+
 func sortGoalInfos(infos []GoalInfo) {
 	sort.SliceStable(infos, func(i, j int) bool {
 		if infos[i].UpdatedAt.Equal(infos[j].UpdatedAt) {

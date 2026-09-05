@@ -120,6 +120,24 @@ type fixedToolResultLoadStore struct {
 	loaded *StoredToolResult
 }
 
+type fixedGoalListStore struct {
+	*MemoryGoalStore
+	infos []GoalInfo
+}
+
+func (s *fixedGoalListStore) List(context.Context) ([]GoalInfo, error) {
+	return s.infos, nil
+}
+
+type fixedToolResultListStore struct {
+	*MemoryToolResultStore
+	infos []ToolResultInfo
+}
+
+func (s *fixedToolResultListStore) List(context.Context) ([]ToolResultInfo, error) {
+	return s.infos, nil
+}
+
 func (s *fixedToolResultLoadStore) Load(context.Context, string) (*StoredToolResult, error) {
 	return s.loaded, nil
 }
@@ -304,6 +322,48 @@ func TestPersistenceLoadsCloneBackendSnapshots(t *testing.T) {
 	goal.Objective = "changed"
 	if goalSource.Objective != "work" {
 		t.Fatal("goal load retained backend-owned goal data")
+	}
+}
+
+func TestPersistenceListsValidateAndCopyBackendData(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	goalSource := []GoalInfo{{
+		ID: "goal", SessionID: "session", Objective: "work", Status: GoalStatusActive,
+		MaxIterations: 2, UpdatedAt: now,
+	}}
+	goals := &fixedGoalListStore{MemoryGoalStore: NewMemoryGoalStore(), infos: goalSource}
+	listedGoals, err := goalStoreList(ctx, goals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listedGoals[0].Objective = "mutated"
+	if goalSource[0].Objective != "work" {
+		t.Fatal("goal list retained backend-owned data")
+	}
+	goals.infos = []GoalInfo{{
+		ID: "goal", SessionID: "session", Objective: "work", Status: "invalid",
+		MaxIterations: 2, UpdatedAt: now,
+	}}
+	if _, err := goalStoreList(ctx, goals); !errors.Is(err, ErrInvalidPersistenceData) {
+		t.Fatalf("goalStoreList() error = %v, want ErrInvalidPersistenceData", err)
+	}
+
+	resultSource := []ToolResultInfo{{ID: "result", Size: 10, CreatedAt: now}}
+	results := &fixedToolResultListStore{
+		MemoryToolResultStore: NewMemoryToolResultStore(), infos: resultSource,
+	}
+	listedResults, err := toolResultStoreList(ctx, results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listedResults[0].ID = "mutated"
+	if resultSource[0].ID != "result" {
+		t.Fatal("tool result list retained backend-owned data")
+	}
+	results.infos = []ToolResultInfo{{ID: "result", Size: -1, CreatedAt: now}}
+	if _, err := toolResultStoreList(ctx, results); !errors.Is(err, ErrInvalidPersistenceData) {
+		t.Fatalf("toolResultStoreList() error = %v, want ErrInvalidPersistenceData", err)
 	}
 }
 

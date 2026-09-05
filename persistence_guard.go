@@ -111,7 +111,23 @@ func goalStoreDelete(ctx context.Context, store GoalStore, id string) error {
 }
 
 func goalStoreList(ctx context.Context, store GoalStore) ([]GoalInfo, error) {
-	return callPersistence("goal list", func() ([]GoalInfo, error) { return store.List(ctx) })
+	infos, err := callPersistence("goal list", func() ([]GoalInfo, error) { return store.List(ctx) })
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(infos))
+	for index, info := range infos {
+		if err := validateGoalInfo(info); err != nil {
+			return nil, fmt.Errorf("%w: invalid goal list entry %d: %w",
+				ErrInvalidPersistenceData, index, err)
+		}
+		if _, exists := seen[info.ID]; exists {
+			return nil, fmt.Errorf("%w: goal list returned duplicate ID %q",
+				ErrInvalidPersistenceData, info.ID)
+		}
+		seen[info.ID] = struct{}{}
+	}
+	return append([]GoalInfo(nil), infos...), nil
 }
 
 func acquireGoalLease(
@@ -174,7 +190,23 @@ func toolResultStoreDelete(ctx context.Context, store ToolResultStore, id string
 }
 
 func toolResultStoreList(ctx context.Context, store ToolResultStore) ([]ToolResultInfo, error) {
-	return callPersistence("tool result list", func() ([]ToolResultInfo, error) { return store.List(ctx) })
+	infos, err := callPersistence("tool result list", func() ([]ToolResultInfo, error) { return store.List(ctx) })
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(infos))
+	for index, info := range infos {
+		if err := validateToolResultInfo(info); err != nil {
+			return nil, fmt.Errorf("%w: invalid tool result list entry %d: %w",
+				ErrInvalidPersistenceData, index, err)
+		}
+		if _, exists := seen[info.ID]; exists {
+			return nil, fmt.Errorf("%w: tool result list returned duplicate ID %q",
+				ErrInvalidPersistenceData, info.ID)
+		}
+		seen[info.ID] = struct{}{}
+	}
+	return append([]ToolResultInfo(nil), infos...), nil
 }
 
 type guardedCheckpointStore struct {
