@@ -5,7 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -459,6 +461,81 @@ func TestModelGoalEvaluatorParsesFencedJSON(t *testing.T) {
 	}
 	if !decision.Complete || decision.Reason != "verified" || decision.NextPrompt != "" {
 		t.Fatalf("unexpected decision: %#v", decision)
+	}
+}
+
+func TestGoalRunnerReusesAgentModelRetryForEvaluation(t *testing.T) {
+	ctx := context.Background()
+	transient := errors.New("temporary evaluator failure")
+	model := NewMockChatModel(
+		MockModelText("work completed"),
+		MockModelError(transient),
+		MockModelText(`{"complete":true,"reason":"verified","next_prompt":""}`),
+	)
+	agent, err := New(ctx, &Config{
+		Name:  "worker",
+		Model: model,
+		ModelRetryConfig: &ModelRetryConfig{
+			MaxRetries:  1,
+			BackoffFunc: func(context.Context, int) time.Duration { return 0 },
+		},
+		Session: &SessionConfig{ID: "retry-evaluation", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, nil)
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+
+	result, err := runner.Start(ctx, GoalRequest{ID: "retry", Objective: "finish work"})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if result.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("goal = %#v, want completed", result.Goal)
+	}
+	if calls := model.Calls(); len(calls) != 3 {
+		t.Fatalf("model calls = %d, want work plus two evaluation attempts", len(calls))
+	}
+}
+
+func TestGoalRunnerEvaluationRetryHonorsShouldRetry(t *testing.T) {
+	ctx := context.Background()
+	model := NewMockChatModel(
+		MockModelText("work completed"),
+		MockModelText("retry this evaluation"),
+		MockModelText(`{"complete":true,"reason":"verified","next_prompt":""}`),
+	)
+	agent, err := New(ctx, &Config{
+		Name:  "worker",
+		Model: model,
+		ModelRetryConfig: &ModelRetryConfig{
+			MaxRetries: 1,
+			ShouldRetry: func(_ context.Context, retry *adk.RetryContext) *adk.RetryDecision {
+				return &adk.RetryDecision{Retry: retry.OutputMessage != nil && retry.OutputMessage.Content == "retry this evaluation"}
+			},
+			BackoffFunc: func(context.Context, int) time.Duration { return 0 },
+		},
+		Session: &SessionConfig{ID: "retry-evaluation-output", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, nil)
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+
+	result, err := runner.Start(ctx, GoalRequest{ID: "retry-output", Objective: "finish work"})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if result.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("goal = %#v, want completed", result.Goal)
 	}
 }
 

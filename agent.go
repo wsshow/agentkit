@@ -97,6 +97,7 @@ type Config struct {
 type Agent struct {
 	name            string
 	model           ChatModel
+	modelRetry      *ModelRetryConfig
 	runner          *adk.Runner
 	state           *State
 	emtr            *emitter
@@ -192,6 +193,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	a := &Agent{
 		name:         cfg.Name,
 		model:        cfg.Model,
+		modelRetry:   cfg.ModelRetryConfig,
 		state:        newState(),
 		emtr:         newEmitter(),
 		checkPointID: checkPointID,

@@ -354,6 +354,8 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 
 目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
 
+默认的模型判断器会直接复用 Agent 的 `ModelRetryConfig`，包括自定义重试判断与退避策略。因此短暂的判断请求故障与普通 Agent 模型调用享受同一层保护，不需要再配置一次；自定义 `GoalEvaluator` 仍完全由应用自行控制。
+
 两个内置目标存储也实现了可选的 `GoalLeaseStore` 接口。`GoalRunner` 会自动发现它，在每个修改状态的操作前取得所有权，在耗时较长的模型或工具调用期间后台续期，并用不透明 Token fencing 每一次保存。并发 worker 会收到 `ErrGoalLeaseHeld`，可通过 `errors.As` 取得 `GoalLeaseHeldError` 中的持有者和到期时间；已经丢失所有权的 worker 会被取消并收到 `ErrGoalLeaseLost`。worker 崩溃且租约过期后，替代 worker 可直接调用 `Resume`，继续沿用已有的安全恢复规则。
 
 默认租约为一分钟，大约每 20 秒续期一次。可通过 `GoalRunnerConfig` 设置 `WorkerID` 和 `LeaseDuration`；生产环境可设置 `RequireLease: true`，避免旧的自定义存储意外退化为单 worker 模式。基础 `GoalStore` 接口保持兼容。
