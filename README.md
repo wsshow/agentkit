@@ -457,7 +457,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 `Paths` accepts a `SKILL.md` file, one skill directory, or a collection directory whose immediate child directories contain skills. Files are reloaded on every list or load operation, so edits take effect without rebuilding the agent. Duplicate names, malformed frontmatter, missing instructions, and files over 1 MiB fail with an explicit error.
 
-For programmatic or remote storage, pass `Backend` instead of `Paths`. AgentKit includes a concurrency-safe `NewMemorySkillBackend` and exposes the small `SkillBackend` interface for custom implementations. The simple configuration intentionally supports inline skills only; skills requesting `context`, `agent`, or `model` overrides fail fast. Applications that need Eino's advanced fork/model routing can install a fully configured Eino skill middleware through `Handlers`.
+For programmatic or remote storage, pass `Backend` instead of `Paths`. AgentKit includes a concurrency-safe `NewMemorySkillBackend` and exposes the small `SkillBackend` interface for custom implementations. A custom backend panic is returned as an error wrapping `ErrSkillBackendPanic`, both during initial listing and a later model-requested load. The simple configuration intentionally supports inline skills only; skills requesting `context`, `agent`, or `model` overrides fail fast. Applications that need Eino's advanced fork/model routing can install a fully configured Eino skill middleware through `Handlers`.
 
 ### MCP Management
 

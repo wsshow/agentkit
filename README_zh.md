@@ -457,7 +457,7 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 `Paths` 可以指向一个 `SKILL.md` 文件、单个技能目录，或由一级技能子目录组成的集合目录。每次列出或加载技能时都会重新读取文件，因此修改后无需重建 Agent。技能重名、frontmatter 格式错误、指令为空或文件超过 1 MiB 都会返回明确错误。
 
-如需使用程序化或远端存储，用 `Backend` 代替 `Paths`。AgentKit 内置并发安全的 `NewMemorySkillBackend`，也暴露了精简的 `SkillBackend` 接口供自定义实现。简易配置有意只支持内联技能；包含 `context`、`agent` 或 `model` 覆盖的技能会尽早报错。需要 Eino 高级 fork/模型路由时，可通过 `Handlers` 安装完整配置的 Eino 技能中间件。
+如需使用程序化或远端存储，用 `Backend` 代替 `Paths`。AgentKit 内置并发安全的 `NewMemorySkillBackend`，也暴露了精简的 `SkillBackend` 接口供自定义实现。自定义后端无论在初始化列举还是模型后续加载时发生 panic，都会返回包装 `ErrSkillBackendPanic` 的错误。简易配置有意只支持内联技能；包含 `context`、`agent` 或 `model` 覆盖的技能会尽早报错。需要 Eino 高级 fork/模型路由时，可通过 `Handlers` 安装完整配置的 Eino 技能中间件。
 
 ### MCP 管理
 

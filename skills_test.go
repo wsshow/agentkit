@@ -274,6 +274,56 @@ func TestAgentRejectsEmptySkillBackend(t *testing.T) {
 	}
 }
 
+func TestAgentIsolatesSkillBackendListPanic(t *testing.T) {
+	_, err := New(context.Background(), &Config{
+		Model: NewMockChatModel(),
+		Skills: &SkillsConfig{Backend: &panicSkillBackend{
+			list: true,
+		}},
+	})
+	if !errors.Is(err, ErrSkillBackendPanic) {
+		t.Fatalf("New() error = %v, want ErrSkillBackendPanic", err)
+	}
+}
+
+func TestAgentIsolatesSkillBackendGetPanic(t *testing.T) {
+	const callID = "load-skill-panic"
+	agent, err := New(context.Background(), &Config{
+		Name:  "assistant",
+		Model: NewMockChatModel(MockModelToolCallWithID(callID, "skill", `{"skill":"demo"}`)),
+		Skills: &SkillsConfig{Backend: &panicSkillBackend{
+			get: true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+
+	if err := agent.Prompt(context.Background(), "load demo"); !errors.Is(err, ErrSkillBackendPanic) {
+		t.Fatalf("Prompt() error = %v, want ErrSkillBackendPanic", err)
+	}
+}
+
+type panicSkillBackend struct {
+	list bool
+	get  bool
+}
+
+func (b *panicSkillBackend) List(context.Context) ([]SkillInfo, error) {
+	if b.list {
+		panic("broken list backend")
+	}
+	return []SkillInfo{{Name: "demo", Description: "Demo"}}, nil
+}
+
+func (b *panicSkillBackend) Get(context.Context, string) (Skill, error) {
+	if b.get {
+		panic("broken get backend")
+	}
+	return Skill{FrontMatter: SkillInfo{Name: "demo", Description: "Demo"}, Content: "instructions"}, nil
+}
+
 func writeSkillFile(t *testing.T, dir, name, description, content, newline string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

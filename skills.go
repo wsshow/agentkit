@@ -20,8 +20,12 @@ const (
 	defaultMaxSkillFileSize = 1 << 20
 )
 
-// ErrSkillNotFound 表示指定技能不存在。
-var ErrSkillNotFound = errors.New("agentkit: skill not found")
+var (
+	// ErrSkillNotFound 表示指定技能不存在。
+	ErrSkillNotFound = errors.New("agentkit: skill not found")
+	// ErrSkillBackendPanic 表示自定义 SkillBackend 发生 panic。
+	ErrSkillBackendPanic = errors.New("agentkit: skill backend panicked")
+)
 
 // Skill 是从 SKILL.md 加载的技能。
 type Skill = einoskill.Skill
@@ -362,8 +366,9 @@ type validatingSkillBackend struct {
 	backend SkillBackend
 }
 
-func (b *validatingSkillBackend) List(ctx context.Context) ([]SkillInfo, error) {
-	infos, err := b.backend.List(ctx)
+func (b *validatingSkillBackend) List(ctx context.Context) (infos []SkillInfo, err error) {
+	defer recoverSkillBackendPanic("List", &err)
+	infos, err = b.backend.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -380,8 +385,9 @@ func (b *validatingSkillBackend) List(ctx context.Context) ([]SkillInfo, error) 
 	return infos, nil
 }
 
-func (b *validatingSkillBackend) Get(ctx context.Context, name string) (Skill, error) {
-	item, err := b.backend.Get(ctx, name)
+func (b *validatingSkillBackend) Get(ctx context.Context, name string) (item Skill, err error) {
+	defer recoverSkillBackendPanic("Get", &err)
+	item, err = b.backend.Get(ctx, name)
 	if err != nil {
 		return Skill{}, err
 	}
@@ -395,6 +401,12 @@ func (b *validatingSkillBackend) Get(ctx context.Context, name string) (Skill, e
 		return Skill{}, fmt.Errorf("agentkit: skill %q instructions are required", item.Name)
 	}
 	return item, nil
+}
+
+func recoverSkillBackendPanic(operation string, err *error) {
+	if value := recover(); value != nil {
+		*err = fmt.Errorf("%w in %s: %v", ErrSkillBackendPanic, operation, value)
+	}
 }
 
 func validateSkillInfo(info SkillInfo) error {
