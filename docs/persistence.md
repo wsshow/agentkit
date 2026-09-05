@@ -28,6 +28,8 @@ Use `History: savedHistory` for manual restoration instead. `History` and `Sessi
 
 ## Direct Session Operations
 
+Applications serving multiple conversations should normally use [SessionManager](sessions.md). It adds strict create/open semantics, per-owner isolation, in-process single-instance coordination, pagination, archive, and fork while preserving this storage contract.
+
 ```go
 sessions, err := store.List(ctx)
 saved, err := store.Load(ctx, "user-123")

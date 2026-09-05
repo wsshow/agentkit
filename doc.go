@@ -10,5 +10,7 @@
 //
 // Call Close when an Agent is no longer needed. Use Cancel for non-blocking
 // cancellation from an event subscriber, or Abort outside a subscriber when the
-// caller must wait for the active run to finish.
+// caller must wait for the active run to finish. Applications serving multiple
+// conversations can use SessionManager to create, reconnect, isolate, archive,
+// fork, and close session-bound Agents.
 package agentkit

@@ -20,28 +20,37 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	agent, err := agentkit.New(ctx, &agentkit.Config{
-		Name:         "assistant",
-		SystemPrompt: "你是一个记忆清晰的助手，回答请简洁。",
-		Model:        chatModel,
-		Session: &agentkit.SessionConfig{
-			ID:    "demo-user",
-			Store: store,
+	manager, err := agentkit.NewSessionManager(&agentkit.SessionManagerConfig{
+		Store:   store,
+		OwnerID: "demo-user",
+		AgentConfig: &agentkit.Config{
+			Name:         "assistant",
+			SystemPrompt: "你是一个记忆清晰的助手，回答请简洁。",
+			Model:        chatModel,
 		},
 	})
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer agent.Close()
+	defer manager.Close()
+
+	agent, created, err := manager.OpenOrCreate(ctx, agentkit.CreateSessionOptions{
+		ID:    "main",
+		Title: "演示会话",
+		Tags:  []string{"demo"},
+	})
+	if err != nil {
+		log.Fatalln(err)
+	}
 	demo.SubscribeText(agent)
 
 	if err := demo.Ask(ctx, agent, "记住我最喜欢的颜色是蓝色，然后告诉我你记住了什么。"); err != nil {
 		log.Fatalln(err)
 	}
 
-	sessions, err := store.List(ctx)
+	sessions, err := manager.List(ctx, agentkit.SessionQuery{})
 	if err != nil {
 		log.Fatalln(err)
 	}
-	fmt.Printf("\n已保存 %d 个会话；再次运行本示例会自动恢复历史。\n", len(sessions))
+	fmt.Printf("\n当前用户有 %d 个会话；本次是否新建：%v。再次运行会自动恢复历史。\n", len(sessions.Sessions), created)
 }

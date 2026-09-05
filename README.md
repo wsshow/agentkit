@@ -91,6 +91,7 @@ See [Runtime and events](docs/runtime.md) for the complete run API, lifecycle ru
 | Need | Start here |
 | --- | --- |
 | Run methods, events, cancellation, HITL, queues, multimodal input | [Runtime and events](docs/runtime.md) |
+| Manage many isolated conversations for users or tenants | [Multi-session management](docs/sessions.md) |
 | Restore conversations and checkpoints after restart | [Sessions and persistence](docs/persistence.md) |
 | Run a multi-step objective for hours or days and reconnect safely | [Durable goals](docs/goals.md) |
 | Delegate focused work to isolated specialist agents | [Subagents](docs/subagents.md) |
@@ -146,7 +147,7 @@ See [Tool management](docs/tools.md) for defaults, ordering, and extension point
 | [simple](examples/simple/) | Minimal multi-turn conversation |
 | [tools](examples/tools/) | Tool calls and progress events |
 | [history](examples/history/) | Manual history export and restore |
-| [session](examples/session/) | Automatic cross-process session restore |
+| [session](examples/session/) | Multi-session management and cross-process restore |
 | [goal](examples/goal/) | Durable objective execution and reconnect |
 | [subagents](examples/subagents/) | Declarative specialist delegation and correlated events |
 | [compaction](examples/compaction/) | Automatic context compaction |

@@ -91,6 +91,7 @@ result, err := stream.Wait()
 | 需求 | 从这里开始 |
 | --- | --- |
 | 运行方法、事件、取消、HITL、队列、多模态输入 | [运行时与事件](docs/zh/runtime.md) |
+| 为用户或租户管理多个隔离会话 | [多会话管理](docs/zh/sessions.md) |
 | 进程重启后恢复对话和检查点 | [会话与持久化](docs/zh/persistence.md) |
 | 运行数小时或数天的多步骤目标，并安全重连 | [持久化目标](docs/zh/goals.md) |
 | 把专业工作委派给上下文隔离的专家 Agent | [子智能体](docs/zh/subagents.md) |
@@ -146,7 +147,7 @@ AgentKit 直接封装了三项真正能减少重复工作的能力，用户无�
 | [simple](examples/simple/) | 最简多轮对话 |
 | [tools](examples/tools/) | 工具调用和进度事件 |
 | [history](examples/history/) | 手动导出并恢复历史 |
-| [session](examples/session/) | 自动跨进程恢复会话 |
+| [session](examples/session/) | 多会话管理与跨进程恢复 |
 | [goal](examples/goal/) | 持久化目标执行和重连 |
 | [subagents](examples/subagents/) | 声明式专家委派与关联事件 |
 | [compaction](examples/compaction/) | 自动上下文压缩 |

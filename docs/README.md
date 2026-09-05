@@ -15,8 +15,9 @@ For a first agent:
 For a production assistant:
 
 1. Add [Sessions and persistence](persistence.md).
-2. Add [Context management](context.md) before conversations grow large.
-3. Review [Tool management](tools.md), especially timeouts and large results.
+2. Use [Multi-session management](sessions.md) when serving more than one conversation.
+3. Add [Context management](context.md) before conversations grow large.
+4. Review [Tool management](tools.md), especially timeouts and large results.
 
 For work that may take hours or days:
 
@@ -36,6 +37,7 @@ For coordinated specialist work:
 | --- | --- |
 | [Runtime and events](runtime.md) | `Ask`, streams, events, lifecycle, request values, HITL, queues, multimodal input |
 | [Sessions and persistence](persistence.md) | Session restore/save, checkpoints, stores, concurrency, retention |
+| [Multi-session management](sessions.md) | Creation, reconnect, ownership, pagination, archive, fork, and Agent lifecycle |
 | [Durable goals](goals.md) | `/goal`-style loops, async execution, reconnect, recovery, leases, idempotency |
 | [Subagents](subagents.md) | Declarative specialists, isolation, budgets, events, nested HITL and goal integration |
 | [Context management](context.md) | Full history versus model context, automatic compaction, ordering with reduction |

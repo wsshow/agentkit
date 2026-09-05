@@ -28,6 +28,8 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 ## 直接管理会话
 
+需要服务多个会话的应用通常应使用[多会话管理器](sessions.md)。它在保持本节存储契约的基础上，提供严格的创建/打开语义、Owner 隔离、进程内单实例协调、分页、归档和分支。
+
 ```go
 sessions, err := store.List(ctx)
 saved, err := store.Load(ctx, "user-123")
