@@ -306,6 +306,8 @@ err = store.Delete(ctx, "user-123") // 删除不存在的会话也会成功
 
 两个内置会话存储都会自动提供配套的检查点存储。因此使用文件会话时无需额外配置，Agent 或进程重建后仍可恢复 HITL 中断。待处理的中断 ID 可通过 `Agent.PendingInterrupts` 和 `Session.PendingInterrupts` 获取；成功 `Resume` 后会消费检查点，`ClearCheckpoint`、`Reset`、`SetHistory` 和删除会话都会让旧检查点失效。不使用 `Session` 时，也可以通过 `agentkit.NewFileCheckpointStore` 和 `Config.CheckPointStore` 单独启用持久化检查点。
 
+它们也会提供不可变的 `ToolResultStore`，用于保存不应长期留在模型上下文里的完整工具结果。不使用会话时可直接创建 `agentkit.NewMemoryToolResultStore` 或 `agentkit.NewFileToolResultStore`；自定义会话后端可额外实现 `agentkit.ToolResultStoreProvider`。
+
 测试或单进程服务可使用 `agentkit.NewMemorySessionStore()`。自定义数据库只需实现 `agentkit.SessionStore`；如需自动提供持久化检查点，可额外实现 `agentkit.CheckpointStoreProvider`。`History` 与 `Session` 不能同时配置，避免恢复来源不明确。同一个会话 ID 同一时间应只由一个 Agent 写入；内置存储保证并发安全，但不会擅自合并两段分叉的对话。
 
 ### 持久化 Goal 模式

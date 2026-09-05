@@ -63,12 +63,14 @@ type MemorySessionStore struct {
 	sessions    map[string]*Session
 	checkpoints *MemoryCheckpointStore
 	goals       *MemoryGoalStore
+	toolResults *MemoryToolResultStore
 }
 
 var (
 	_ SessionStore            = (*MemorySessionStore)(nil)
 	_ CheckpointStoreProvider = (*MemorySessionStore)(nil)
 	_ GoalStoreProvider       = (*MemorySessionStore)(nil)
+	_ ToolResultStoreProvider = (*MemorySessionStore)(nil)
 )
 
 // NewMemorySessionStore 创建内存会话存储。
@@ -77,6 +79,7 @@ func NewMemorySessionStore() *MemorySessionStore {
 		sessions:    make(map[string]*Session),
 		checkpoints: NewMemoryCheckpointStore(),
 		goals:       NewMemoryGoalStore(),
+		toolResults: NewMemoryToolResultStore(),
 	}
 }
 
@@ -98,6 +101,16 @@ func (s *MemorySessionStore) GoalStore() GoalStore {
 		s.goals = NewMemoryGoalStore()
 	}
 	return s.goals
+}
+
+// ToolResultStore 返回与会话配套的内存大型工具结果存储。
+func (s *MemorySessionStore) ToolResultStore() ToolResultStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.toolResults == nil {
+		s.toolResults = NewMemoryToolResultStore()
+	}
+	return s.toolResults
 }
 
 // Load 加载会话快照。
