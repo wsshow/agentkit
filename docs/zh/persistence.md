@@ -52,6 +52,8 @@ err := agent.SaveSession(ctx)
 
 `History` 和 `Session` 返回副本。`SetHistory` 会使旧检查点失效；需要立即持久化替换内容时调用 `SaveSession`。`Reset` 会等待当前运行结束，然后清空历史和队列。
 
+只在 Agent 空闲时调用 `SaveSession`。并发调用会返回 `ErrAgentRunning`，而不是把半个工具调用回合持久化。正常的 `Prompt`、`Send`、`Continue` 和 `Resume` 仍会在完整运行稳定结束后执行内部保存。
+
 ## 持久化 HITL 检查点
 
 两个内置会话存储都会自动提供匹配的检查点存储。因此文件会话在 Agent 或进程重建后也能恢复待处理 HITL，不需要额外配置。

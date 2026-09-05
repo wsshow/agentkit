@@ -113,6 +113,8 @@ session, err := manager.UpdateMetadata(ctx, "conversation-42", agentkit.SessionM
 
 A scoped manager preserves its configured `OwnerID` when the replacement omits it.
 
+If the Agent is running, `UpdateMetadata` waits for the complete run and final session save before replacing metadata. The wait follows the call context and never persists a partial tool-call turn.
+
 Archiving is a lifecycle operation, not deletion:
 
 ```go

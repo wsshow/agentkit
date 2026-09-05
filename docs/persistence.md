@@ -52,6 +52,8 @@ err := agent.SaveSession(ctx)
 
 `History` and `Session` return copies. `SetHistory` invalidates stale checkpoints; call `SaveSession` when the replacement must be immediately durable. `Reset` clears history and queues after waiting for an active run to finish.
 
+Call `SaveSession` only while the Agent is idle. A concurrent call returns `ErrAgentRunning` instead of persisting half of a tool-call turn. Normal `Prompt`, `Send`, `Continue`, and `Resume` execution still saves internally after the complete run settles.
+
 ## Durable HITL Checkpoints
 
 Both built-in session stores automatically provide a matching checkpoint store. A file-backed Agent can therefore resume a pending HITL interrupt after the Agent or process is recreated, without additional wiring.

@@ -113,6 +113,8 @@ session, err := manager.UpdateMetadata(ctx, "conversation-42", agentkit.SessionM
 
 使用限定 Owner 的管理器时，替换值未填写 `OwnerID` 会自动保留管理器配置的 Owner。
 
+Agent 正在运行时，`UpdateMetadata` 会等到完整运行和最终会话保存结束后再替换元数据。等待遵循调用方 context，也不会持久化半个工具调用回合。
+
 归档属于生命周期操作，不等于删除：
 
 ```go
