@@ -630,6 +630,57 @@ func TestGoalRunnerEvaluationRetriesBeforeModelFailover(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerRecoversFromEvaluatorPanic(t *testing.T) {
+	ctx := context.Background()
+	model := NewMockChatModel(MockModelText("work completed"))
+	agent, err := New(ctx, &Config{
+		Name:    "worker",
+		Model:   model,
+		Session: &SessionConfig{ID: "evaluation-panic", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(context.Context, GoalEvaluation) (GoalDecision, error) {
+			panic("broken evaluator")
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+
+	result, err := runner.Start(ctx, GoalRequest{ID: "panic", Objective: "finish work"})
+	if !errors.Is(err, ErrGoalEvaluatorPanic) {
+		t.Fatalf("Start() error = %v, want ErrGoalEvaluatorPanic", err)
+	}
+	if result == nil || result.Goal == nil || !result.Goal.PendingEvaluation {
+		t.Fatalf("Start() result = %#v, want pending evaluation", result)
+	}
+	saved, err := runner.Get(ctx, "panic")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !saved.PendingEvaluation || !strings.Contains(saved.LastError, ErrGoalEvaluatorPanic.Error()) {
+		t.Fatalf("saved goal = %#v, want recoverable evaluator error", saved)
+	}
+
+	runner.evaluator = GoalEvaluatorFunc(func(context.Context, GoalEvaluation) (GoalDecision, error) {
+		return GoalDecision{Complete: true, Reason: "verified"}, nil
+	})
+	resumed, err := runner.Resume(ctx, "panic")
+	if err != nil {
+		t.Fatalf("Resume() error = %v", err)
+	}
+	if resumed.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("resumed goal = %#v, want completed", resumed.Goal)
+	}
+	if got := len(model.Calls()); got != 1 {
+		t.Fatalf("model calls = %d, want no repeated work after evaluator panic", got)
+	}
+}
+
 func TestNewGoalRunnerRequiresSession(t *testing.T) {
 	ctx := context.Background()
 	agent, err := New(ctx, &Config{Name: "worker", Model: NewMockChatModel()})

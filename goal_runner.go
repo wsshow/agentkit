@@ -31,6 +31,8 @@ var (
 	ErrGoalRecoveryRequired = errors.New("agentkit: goal recovery requires an explicit retry")
 	// ErrGoalResumeAmbiguous 表示当前会话有多个未完成目标，调用方必须明确指定目标 ID。
 	ErrGoalResumeAmbiguous = errors.New("agentkit: multiple unfinished goals require an explicit goal ID")
+	// ErrGoalEvaluatorPanic 表示自定义 GoalEvaluator 发生 panic。
+	ErrGoalEvaluatorPanic = errors.New("agentkit: goal evaluator panicked")
 )
 
 // GoalRequest 创建一个新的自动推进目标。
@@ -690,7 +692,7 @@ func (r *GoalRunner) finishAttempt(ctx context.Context, goal *Goal, result *RunR
 }
 
 func (r *GoalRunner) evaluate(ctx context.Context, goal *Goal) error {
-	decision, err := r.evaluator.Evaluate(ctx, GoalEvaluation{
+	decision, err := evaluateGoal(r.evaluator, ctx, GoalEvaluation{
 		Objective: goal.Objective, SuccessCriteria: goal.SuccessCriteria,
 		Iteration: goal.Iteration, LastResponse: goal.LastResponse,
 	})
@@ -717,6 +719,15 @@ func (r *GoalRunner) evaluate(ctx context.Context, goal *Goal) error {
 		goal.Status = GoalStatusActive
 	}
 	return r.save(persistCtx, goal)
+}
+
+func evaluateGoal(evaluator GoalEvaluator, ctx context.Context, evaluation GoalEvaluation) (decision GoalDecision, err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			err = fmt.Errorf("%w: %v", ErrGoalEvaluatorPanic, value)
+		}
+	}()
+	return evaluator.Evaluate(ctx, evaluation)
 }
 
 func (r *GoalRunner) recoverAttempt(ctx context.Context, goal *Goal) (*RunResult, error) {

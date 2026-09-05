@@ -389,7 +389,7 @@ key, ok := agentkit.GoalOperationKey(ctx, "publish-release")
 
 如果工作本身和随后的恢复状态落盘同时失败，GoalRunner 会用 `errors.Join` 一起返回，调用方可分别通过 `errors.Is` 判断。框架不会只报告模型/工具错误，却静默隐藏持久化恢复点可能已经陈旧。
 
-默认的模型判断器会直接复用 Agent 的 `ModelRetryConfig` 和 `ModelFailoverConfig`，包括自定义重试判断、退避与备用模型选择，并与普通 Agent 调用一样先耗尽当前模型重试再切换。因此短暂的判断请求故障无需重复配置；自定义 `GoalEvaluator` 仍完全由应用自行控制。
+默认的模型判断器会直接复用 Agent 的 `ModelRetryConfig` 和 `ModelFailoverConfig`，包括自定义重试判断、退避与备用模型选择，并与普通 Agent 调用一样先耗尽当前模型重试再切换。因此短暂的判断请求故障无需重复配置。自定义 `GoalEvaluator` 发生 panic 时会返回包装 `ErrGoalEvaluatorPanic` 的错误；已经完成的工作会保持为待判断状态，修复判断器后可直接恢复而不会重复执行。
 
 两个内置目标存储也实现了可选的 `GoalLeaseStore` 接口。`GoalRunner` 会自动发现它，在每个修改状态的操作前取得所有权，在耗时较长的模型或工具调用期间后台续期，并用不透明 Token fencing 每一次保存。并发 worker 会收到 `ErrGoalLeaseHeld`，可通过 `errors.As` 取得 `GoalLeaseHeldError` 中的持有者和到期时间；已经丢失所有权的 worker 会被取消并收到 `ErrGoalLeaseLost`。worker 崩溃且租约过期后，替代 worker 可直接调用 `Resume`，继续沿用已有的安全恢复规则。
 
