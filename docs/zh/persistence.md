@@ -24,6 +24,8 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 `agentkit.New` 会恢复同一 ID 的已有会话。`Prompt`、`Send`、`Continue` 和 `Resume` 都会自动保存，包括模型失败或运行取消的情况。启用[上下文压缩](context.md)后，会话会同时保存完整历史和模型上下文。
 
+会话 ID 是精确的持久化键：不能为空，也不能带首尾空白。直接 `SessionConfig`、内置存储、查询结果和 `SessionManager` 会统一执行这条规则，避免视觉上相同的 ID 重连到两条不同记录。
+
 需要手动恢复时可改用 `History: savedHistory`。`History` 与 `Session` 互斥，避免出现两个状态来源。
 
 ## 直接管理会话

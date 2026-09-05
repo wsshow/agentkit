@@ -24,6 +24,8 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 
 `agentkit.New` restores an existing session with the same ID. `Prompt`, `Send`, `Continue`, and `Resume` save automatically, including when a model fails or the run is canceled. The session stores both full history and compacted model context when [compaction](context.md) is enabled.
 
+Session IDs are exact durable keys. They must be non-blank and cannot contain surrounding whitespace; this rule is enforced consistently by direct `SessionConfig`, built-in stores, query results, and `SessionManager`, preventing visually identical IDs from reconnecting to different records.
+
 Use `History: savedHistory` for manual restoration instead. `History` and `Session` are mutually exclusive so the source of truth is unambiguous.
 
 ## Direct Session Operations
