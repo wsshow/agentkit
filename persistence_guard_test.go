@@ -79,6 +79,19 @@ func (panickingCheckpointStore) Delete(context.Context, string) error {
 	panic("broken checkpoint delete")
 }
 
+type retainingCheckpointStore struct {
+	value []byte
+}
+
+func (s *retainingCheckpointStore) Set(_ context.Context, _ string, value []byte) error {
+	s.value = value
+	return nil
+}
+
+func (s *retainingCheckpointStore) Get(context.Context, string) ([]byte, bool, error) {
+	return s.value, true, nil
+}
+
 type panickingToolResultStore struct{}
 
 func (panickingToolResultStore) Load(context.Context, string) (*StoredToolResult, error) {
@@ -322,6 +335,28 @@ func TestPersistenceLoadsCloneBackendSnapshots(t *testing.T) {
 	goal.Objective = "changed"
 	if goalSource.Objective != "work" {
 		t.Fatal("goal load retained backend-owned goal data")
+	}
+}
+
+func TestGuardedCheckpointStoreIsolatesBackendBytes(t *testing.T) {
+	ctx := context.Background()
+	backend := &retainingCheckpointStore{}
+	store := guardCheckpointStore(backend)
+	input := []byte("checkpoint")
+	if err := store.Set(ctx, "id", input); err != nil {
+		t.Fatal(err)
+	}
+	input[0] = 'X'
+	if string(backend.value) != "checkpoint" {
+		t.Fatalf("checkpoint backend retained caller bytes: %q", backend.value)
+	}
+	loaded, existed, err := store.Get(ctx, "id")
+	if err != nil || !existed {
+		t.Fatalf("checkpoint Get() = %q, %v, %v", loaded, existed, err)
+	}
+	loaded[0] = 'Y'
+	if string(backend.value) != "checkpoint" {
+		t.Fatalf("checkpoint load exposed backend bytes: %q", backend.value)
 	}
 }
 

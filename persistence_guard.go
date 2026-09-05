@@ -246,7 +246,8 @@ type guardedCheckpointStore struct {
 }
 
 func (s *guardedCheckpointStore) Set(ctx context.Context, id string, value []byte) error {
-	return doPersistence("checkpoint save", func() error { return s.store.Set(ctx, id, value) })
+	cloned := append([]byte(nil), value...)
+	return doPersistence("checkpoint save", func() error { return s.store.Set(ctx, id, cloned) })
 }
 
 func (s *guardedCheckpointStore) Get(ctx context.Context, id string) (value []byte, existed bool, err error) {
@@ -258,7 +259,7 @@ func (s *guardedCheckpointStore) Get(ctx context.Context, id string) (value []by
 		value, existed, err := s.store.Get(ctx, id)
 		return lookup{value: value, existed: existed}, err
 	})
-	return result.value, result.existed, err
+	return append([]byte(nil), result.value...), result.existed, err
 }
 
 type guardedCheckpointStoreWithDelete struct {
