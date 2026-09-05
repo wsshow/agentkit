@@ -432,6 +432,42 @@ func (r *GoalRunner) prepareResume(ctx context.Context, id string) (prepared *pr
 
 // ResumeInterrupt 提交 HITL 数据后继续当前目标。
 func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map[string]any) (out *GoalRunResult, retErr error) {
+	prepared, err := r.prepareResumeInterrupt(ctx, id, targets)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, prepared.finish()) }()
+	return r.runResumeInterrupt(prepared)
+}
+
+// ResumeInterruptAsync 提交 HITL 数据、持久化恢复状态后，在后台继续当前目标。
+// 返回前会复制 targets 的 map 容器；其中的引用类值仍应由调用方视为不可变。
+func (r *GoalRunner) ResumeInterruptAsync(ctx context.Context, id string, targets map[string]any) (*GoalRun, error) {
+	prepared, err := r.prepareResumeInterrupt(ctx, id, targets)
+	if err != nil {
+		return nil, err
+	}
+	run := &GoalRun{runner: r, id: id, done: make(chan struct{})}
+	go func() {
+		result, runErr := r.runResumeInterrupt(prepared)
+		run.complete(result, errors.Join(runErr, prepared.finish()))
+	}()
+	return run, nil
+}
+
+type preparedGoalInterrupt struct {
+	ctx         context.Context
+	finish      func() error
+	goal        *Goal
+	targets     map[string]any
+	terminalErr error
+}
+
+func (r *GoalRunner) prepareResumeInterrupt(
+	ctx context.Context,
+	id string,
+	targets map[string]any,
+) (prepared *preparedGoalInterrupt, retErr error) {
 	if err := validateGoalContextAndID(ctx, id); err != nil {
 		return nil, err
 	}
@@ -439,13 +475,21 @@ func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map
 	if err != nil {
 		return nil, err
 	}
-	defer func() { retErr = errors.Join(retErr, finish()) }()
+	owned := false
+	defer func() {
+		if !owned {
+			retErr = errors.Join(retErr, finish())
+		}
+	}()
 	goal, err := r.loadForAgent(runCtx, id)
 	if err != nil {
 		return nil, err
 	}
+	prepared = &preparedGoalInterrupt{ctx: runCtx, finish: finish, goal: goal}
 	if len(r.agent.PendingInterrupts()) == 0 {
-		return &GoalRunResult{Goal: goal}, errors.New("agentkit: goal is not waiting for an interrupt")
+		prepared.terminalErr = errors.New("agentkit: goal is not waiting for an interrupt")
+		owned = true
+		return prepared, nil
 	}
 	if goal.AttemptIteration > goal.Iteration {
 		goal.Iteration = goal.AttemptIteration
@@ -457,15 +501,38 @@ func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map
 	if err := r.save(runCtx, goal); err != nil {
 		return nil, err
 	}
-	result, runErr := r.agent.ResumeWithResult(withGoalRunContext(runCtx, goal), targets)
+	prepared.targets = cloneInterruptTargets(targets)
+	owned = true
+	return prepared, nil
+}
+
+func (r *GoalRunner) runResumeInterrupt(prepared *preparedGoalInterrupt) (*GoalRunResult, error) {
+	if prepared.terminalErr != nil {
+		return &GoalRunResult{Goal: cloneGoal(prepared.goal)}, prepared.terminalErr
+	}
+	result, runErr := r.agent.ResumeWithResult(
+		withGoalRunContext(prepared.ctx, prepared.goal),
+		prepared.targets,
+	)
 	if runErr != nil {
-		persistErr := r.recordRunError(runCtx, goal, runErr)
-		return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, errors.Join(runErr, persistErr)
+		persistErr := r.recordRunError(prepared.ctx, prepared.goal, runErr)
+		return &GoalRunResult{Goal: cloneGoal(prepared.goal), LastRun: result}, errors.Join(runErr, persistErr)
 	}
-	if err := r.finishAttempt(runCtx, goal, result); err != nil {
-		return &GoalRunResult{Goal: cloneGoal(goal), LastRun: result}, err
+	if err := r.finishAttempt(prepared.ctx, prepared.goal, result); err != nil {
+		return &GoalRunResult{Goal: cloneGoal(prepared.goal), LastRun: result}, err
 	}
-	return r.drive(runCtx, goal, result)
+	return r.drive(prepared.ctx, prepared.goal, result)
+}
+
+func cloneInterruptTargets(targets map[string]any) map[string]any {
+	if targets == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(targets))
+	for id, value := range targets {
+		cloned[id] = value
+	}
+	return cloned
 }
 
 // Get 返回最新目标状态。

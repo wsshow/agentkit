@@ -164,3 +164,76 @@ func TestGoalRunnerResumePendingAsyncContinuesSavedEvaluation(t *testing.T) {
 		t.Fatalf("model calls = %d, want saved work not to repeat", got)
 	}
 }
+
+func TestGoalRunnerResumeInterruptAsyncPersistsAndCopiesTargets(t *testing.T) {
+	ctx := context.Background()
+	resumeStarted := make(chan struct{})
+	readTarget := make(chan struct{})
+	tool := MustMockTool("approve", "wait for approval", func(ctx context.Context, _ string) (string, error) {
+		wasInterrupted, _, _ := GetInterruptState[any](ctx)
+		if !wasInterrupted {
+			return "", Interrupt(ctx, "approve work")
+		}
+		close(resumeStarted)
+		select {
+		case <-readTarget:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		isTarget, hasData, approved := GetResumeContext[bool](ctx)
+		if !isTarget || !hasData || !approved {
+			return "rejected", nil
+		}
+		return "approved", nil
+	})
+	const callID = "async-approval"
+	agent, err := New(ctx, &Config{
+		Name: "worker",
+		Model: NewMockChatModel(
+			MockModelToolCallWithID(callID, "approve", `""`),
+			MockModelTextAfterToolResult(callID),
+		),
+		Tools:   MockTools(tool),
+		Session: &SessionConfig{ID: "async-interrupt", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(context.Context, GoalEvaluation) (GoalDecision, error) {
+			return GoalDecision{Complete: true, Reason: "approved"}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+	started, err := runner.Start(ctx, GoalRequest{ID: "approval", Objective: "approve work"})
+	if err != nil || started.Goal.Status != GoalStatusPaused {
+		t.Fatalf("Start() = %#v, %v, want paused", started, err)
+	}
+	pending := agent.PendingInterrupts()
+	if len(pending) != 1 {
+		t.Fatalf("PendingInterrupts() = %#v, want one", pending)
+	}
+	targets := map[string]any{pending[0].ID: true}
+	run, err := runner.ResumeInterruptAsync(ctx, "approval", targets)
+	if err != nil {
+		t.Fatalf("ResumeInterruptAsync() error = %v", err)
+	}
+	select {
+	case <-resumeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background interrupt resume did not start")
+	}
+	saved, err := runner.Get(ctx, "approval")
+	if err != nil || saved.Status != GoalStatusActive || !saved.InProgress {
+		t.Fatalf("Get() = %#v, %v, want persisted active resume", saved, err)
+	}
+	targets[pending[0].ID] = false
+	close(readTarget)
+	result, err := run.Wait()
+	if err != nil || result.Goal.Status != GoalStatusCompleted || result.LastRun.Text != "approved" {
+		t.Fatalf("Wait() = %#v, %v, want approved completion", result, err)
+	}
+}

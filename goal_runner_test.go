@@ -480,6 +480,10 @@ func TestGoalRunnerResumesHITLWithoutStartingANewIteration(t *testing.T) {
 	if result.LastRun == nil || result.LastRun.Text != "approved" {
 		t.Fatalf("unexpected resumed result: %#v", result.LastRun)
 	}
+	current, err := runner.ResumeInterrupt(ctx, "hitl", nil)
+	if err == nil || current == nil || current.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("second ResumeInterrupt() = %#v, %v, want current completed goal and error", current, err)
+	}
 }
 
 func TestModelGoalEvaluatorParsesFencedJSON(t *testing.T) {

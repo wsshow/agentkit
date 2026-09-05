@@ -385,11 +385,12 @@ err = run.Pause(controlCtx)             // persists pause, then cancels active w
 
 resumed, err := goals.ResumeAsync(workerCtx, goalID)
 resumed, err = goals.ResumePendingAsync(workerCtx) // only when exactly one is unfinished
+resumed, err = goals.ResumeInterruptAsync(workerCtx, goalID, targets)
 ```
 
 Use an application or worker lifetime context for the async methods, rather than a short HTTP request context. Live callers can use `Done`/`Wait`; disconnected clients can reconnect with the returned ID and read the same durable state through `Get` or `List`.
 
-Recreate the file store and Agent with the same session ID after a process restart, then call `goals.Resume(ctx, "release-v2")`. If the ID was generated automatically, `goals.ResumePending(ctx)` resumes the current session's only unfinished goal; it returns `ErrGoalResumeAmbiguous` instead of guessing when multiple goals exist. `goals.List(ctx)` returns reconnect-ready summaries only for the current session, including the objective, iteration limit, pending phase, latest reason, and latest error. The built-in session stores automatically supply their matching `GoalStore`; a custom evaluator or store can be set through `GoalRunnerConfig`. Use `Get`, `Pause`, and `Clear` for control. When a goal reaches HITL, submit the pending IDs with `ResumeInterrupt`.
+Recreate the file store and Agent with the same session ID after a process restart, then call `goals.Resume(ctx, "release-v2")`. If the ID was generated automatically, `goals.ResumePending(ctx)` resumes the current session's only unfinished goal; it returns `ErrGoalResumeAmbiguous` instead of guessing when multiple goals exist. `goals.List(ctx)` returns reconnect-ready summaries only for the current session, including the objective, iteration limit, pending phase, latest reason, and latest error. The built-in session stores automatically supply their matching `GoalStore`; a custom evaluator or store can be set through `GoalRunnerConfig`. Use `Get`, `Pause`, and `Clear` for control. When a goal reaches HITL, submit the pending IDs with `ResumeInterrupt` or its background counterpart `ResumeInterruptAsync`.
 
 Every successfully committed state change emits `EventGoalUpdate` through `Agent.Subscribe`. Its `Event.Goal` is an isolated snapshot with the same revision as durable storage, so applications can update live status without polling and use `Get` after reconnecting.
 
