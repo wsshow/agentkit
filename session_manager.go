@@ -453,7 +453,7 @@ func (m *SessionManager) ActiveSessionIDs() []string {
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.active))
 	for id, agent := range m.active {
-		if !agentCloseStarted(agent) {
+		if !agentCloseStarted(agent) && !agentSessionStale(agent) {
 			ids = append(ids, id)
 		}
 	}
@@ -631,7 +631,7 @@ func (m *SessionManager) usableActiveLocked(ctx context.Context, id string) (*Ag
 	if agent == nil {
 		return nil, nil
 	}
-	if !agentCloseStarted(agent) {
+	if !agentCloseStarted(agent) && !agentSessionStale(agent) {
 		return agent, nil
 	}
 	if err := agent.CloseContext(ctx); err != nil {
@@ -875,6 +875,12 @@ func agentCloseStarted(agent *Agent) bool {
 	agent.closeMu.Lock()
 	defer agent.closeMu.Unlock()
 	return agent.closeStarted
+}
+
+func agentSessionStale(agent *Agent) bool {
+	agent.mu.Lock()
+	defer agent.mu.Unlock()
+	return agent.sessionStale
 }
 
 func sessionStoresDiffer(left, right SessionStore) bool {

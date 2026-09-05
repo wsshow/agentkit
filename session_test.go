@@ -570,6 +570,9 @@ func TestAgentsReportConcurrentSessionConflict(t *testing.T) {
 	if err := stale.Prompt(ctx, "stale prompt"); !errors.Is(err, ErrSessionConflict) {
 		t.Fatalf("stale Prompt() error = %v, want ErrSessionConflict", err)
 	}
+	if err := stale.Prompt(ctx, "must not run"); !errors.Is(err, ErrSessionStale) {
+		t.Fatalf("second stale Prompt() error = %v, want ErrSessionStale", err)
+	}
 
 	persisted, err := store.Load(ctx, "shared")
 	if err != nil {

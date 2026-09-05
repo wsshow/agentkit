@@ -23,6 +23,8 @@ var (
 	ErrSessionDisabled = errors.New("agentkit: session persistence is not configured")
 	// ErrSessionArchived 表示会话已经归档，不能再创建运行实例。
 	ErrSessionArchived = errors.New("agentkit: session is archived")
+	// ErrSessionStale 表示 Agent 的会话快照已发生并发冲突，必须重新打开。
+	ErrSessionStale = errors.New("agentkit: session snapshot is stale; reopen the session")
 )
 
 // SessionConfig 配置 Agent 的自动会话恢复与持久化。

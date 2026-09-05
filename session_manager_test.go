@@ -88,6 +88,65 @@ func TestSessionManagerCreateOpenCloseAndRestore(t *testing.T) {
 	}
 }
 
+func TestSessionManagerReopensAgentAfterSessionConflict(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	firstManager, err := NewSessionManager(&SessionManagerConfig{
+		Store: store,
+		AgentConfig: &Config{
+			Name:  "assistant",
+			Model: NewMockChatModel(MockModelText("current response")),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstManager.Close()
+	secondManager, err := NewSessionManager(&SessionManagerConfig{
+		Store: store,
+		AgentConfig: &Config{
+			Name:  "assistant",
+			Model: NewMockChatModel(MockModelText("stale response")),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondManager.Close()
+
+	current, err := firstManager.CreateWithOptions(ctx, CreateSessionOptions{ID: "shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := secondManager.Open(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := current.Prompt(ctx, "current prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := stale.Prompt(ctx, "stale prompt"); !errors.Is(err, ErrSessionConflict) {
+		t.Fatalf("stale Prompt() error = %v, want ErrSessionConflict", err)
+	}
+	if ids := secondManager.ActiveSessionIDs(); len(ids) != 0 {
+		t.Fatalf("ActiveSessionIDs() = %v, want stale session excluded", ids)
+	}
+
+	reopened, err := secondManager.Open(ctx, "shared")
+	if err != nil {
+		t.Fatalf("Open() after conflict error = %v", err)
+	}
+	if reopened == stale {
+		t.Fatal("Open() after conflict reused the stale Agent")
+	}
+	if got := schemaMessageContents(reopened.History()); !slices.Equal(got, []string{"current prompt", "current response"}) {
+		t.Fatalf("reopened history = %v, want authoritative history", got)
+	}
+	if err := stale.Prompt(ctx, "closed stale agent"); !errors.Is(err, ErrAgentClosed) {
+		t.Fatalf("old Agent Prompt() error = %v, want ErrAgentClosed", err)
+	}
+}
+
 func TestSessionManagerAggregatesSessionEvents(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()

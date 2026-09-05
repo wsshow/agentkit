@@ -152,6 +152,7 @@ type Agent struct {
 	sessionCreatedAt time.Time
 	sessionUpdatedAt time.Time
 	sessionRevision  uint64
+	sessionStale     bool
 	sessionSaveMu    sync.Mutex
 
 	mcpConnections []managedMCPConnection
@@ -933,6 +934,10 @@ func (a *Agent) saveSession(ctx context.Context, metadata *SessionMetadata, allo
 		a.mu.Unlock()
 		return ErrSessionDisabled
 	}
+	if a.sessionStale {
+		a.mu.Unlock()
+		return ErrSessionStale
+	}
 	if a.running && !allowRunning {
 		a.mu.Unlock()
 		return ErrAgentRunning
@@ -962,6 +967,11 @@ func (a *Agent) saveSession(ctx context.Context, metadata *SessionMetadata, allo
 	a.mu.Unlock()
 
 	if err := sessionStoreSave(ctx, store, session); err != nil {
+		if errors.Is(err, ErrSessionConflict) {
+			a.mu.Lock()
+			a.sessionStale = true
+			a.mu.Unlock()
+		}
 		return fmt.Errorf("agentkit: save session %q: %w", session.ID, err)
 	}
 
@@ -1066,6 +1076,9 @@ func (a *Agent) startRun(ctx context.Context) (context.Context, error) {
 	if a.running {
 		return nil, ErrAgentRunning
 	}
+	if a.sessionStale {
+		return nil, ErrSessionStale
+	}
 	if ctx == nil {
 		return nil, errors.New("agentkit: context is required")
 	}
@@ -1097,6 +1110,9 @@ func (a *Agent) reserveGoalRun(id string, stop context.CancelFunc) error {
 	}
 	if a.running || a.goalRun != "" {
 		return ErrAgentRunning
+	}
+	if a.sessionStale {
+		return ErrSessionStale
 	}
 	a.goalRun = id
 	a.goalDone = make(chan struct{})
