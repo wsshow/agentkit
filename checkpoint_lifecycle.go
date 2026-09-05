@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
 )
+
+const abandonedToolCallResult = "AgentKit abandoned this tool call after its pending checkpoint was cleared."
 
 func (a *Agent) markInterrupted(points []InterruptPoint) {
 	a.mu.Lock()
@@ -48,6 +51,13 @@ func (a *Agent) discardCheckpoint(ctx context.Context) error {
 	a.mu.Lock()
 	store := a.checkpointStore
 	oldID := a.checkPointID
+	if len(a.pendingInterrupts) > 0 || a.runInterrupted {
+		a.history = appendAbandonedToolResults(a.history)
+		a.contextHistory = appendAbandonedToolResults(a.contextHistory)
+		a.toolCalls = make(map[string]toolCallInfo)
+		a.toolBatchDone = nil
+		a.toolBatchDoneFlag = false
+	}
 	a.checkPointID = a.name + "/" + uuid.NewString()
 	a.pendingInterrupts = nil
 	a.runInterrupted = false
@@ -64,4 +74,38 @@ func (a *Agent) discardCheckpoint(ctx context.Context) error {
 		return fmt.Errorf("agentkit: delete checkpoint %q: %w", oldID, err)
 	}
 	return nil
+}
+
+func appendAbandonedToolResults(messages []*schema.Message) []*schema.Message {
+	assistantIndex := -1
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		if message != nil && message.Role == schema.Assistant && len(message.ToolCalls) > 0 {
+			assistantIndex = index
+			break
+		}
+	}
+	if assistantIndex < 0 {
+		return messages
+	}
+	completed := make(map[string]struct{})
+	for _, message := range messages[assistantIndex+1:] {
+		if message != nil && message.Role == schema.Tool && message.ToolCallID != "" {
+			completed[message.ToolCallID] = struct{}{}
+		}
+	}
+	for _, call := range messages[assistantIndex].ToolCalls {
+		if call.ID == "" {
+			continue
+		}
+		if _, exists := completed[call.ID]; exists {
+			continue
+		}
+		messages = append(messages, schema.ToolMessage(
+			abandonedToolCallResult,
+			call.ID,
+			schema.WithToolName(call.Function.Name),
+		))
+	}
+	return messages
 }

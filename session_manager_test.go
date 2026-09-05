@@ -522,6 +522,17 @@ func TestSessionManagerRejectsForkFromPendingInterrupt(t *testing.T) {
 	if len(source.PendingInterrupts()) != 1 {
 		t.Fatal("rejected Fork() changed the source interrupt")
 	}
+	if err := source.ClearCheckpoint(ctx); err != nil {
+		t.Fatalf("ClearCheckpoint() error = %v", err)
+	}
+	branch, err := manager.Fork(ctx, "source", CreateSessionOptions{ID: "cleared-branch"})
+	if err != nil {
+		t.Fatalf("Fork() after ClearCheckpoint() error = %v", err)
+	}
+	history := branch.History()
+	if len(history) != 3 || history[2].Role != schema.Tool || history[2].Content != abandonedToolCallResult {
+		t.Fatalf("cleared branch history = %#v", history)
+	}
 }
 
 func TestSessionManagerSnapshotOperationsWaitForSourceRunToSettle(t *testing.T) {

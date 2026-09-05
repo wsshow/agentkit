@@ -3,6 +3,7 @@ package agentkit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool/utils"
@@ -211,6 +212,60 @@ func TestClearCheckpointPersistsInvalidation(t *testing.T) {
 	}
 	if len(session.PendingInterrupts) != 0 || session.CheckpointID == oldID {
 		t.Fatalf("persisted session after clear = %#v", session)
+	}
+}
+
+func TestClearCheckpointCompletesInterruptedToolTurn(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	const callID = "abandoned-approval"
+	model := NewMockChatModel(
+		MockModelToolCallWithID(callID, "approve_action", `{"action":"release"}`),
+		MockExpect(MockModelText("continued"), func(call MockModelCall) error {
+			if len(call.Input) != 4 {
+				return fmt.Errorf("model input has %d messages, want 4", len(call.Input))
+			}
+			toolResult := call.Input[2]
+			if toolResult.Role != schema.Tool || toolResult.ToolCallID != callID || toolResult.ToolName != "approve_action" || toolResult.Content != abandonedToolCallResult {
+				return fmt.Errorf("abandoned tool result = %#v", toolResult)
+			}
+			return nil
+		}),
+	)
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: model,
+		Tools: []Tool{newCheckpointApprovalTool(t)},
+		Session: &SessionConfig{
+			ID: "clear-interrupt", Store: store,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+	if err := agent.Prompt(ctx, "release"); err != nil {
+		t.Fatal(err)
+	}
+	if len(agent.PendingInterrupts()) != 1 {
+		t.Fatal("agent did not retain its interrupt")
+	}
+	if err := agent.ClearCheckpoint(ctx); err != nil {
+		t.Fatal(err)
+	}
+	history := agent.History()
+	if len(history) != 3 || history[2].Role != schema.Tool || history[2].ToolCallID != callID {
+		t.Fatalf("history after ClearCheckpoint() = %#v", history)
+	}
+	if err := agent.Prompt(ctx, "take another path"); err != nil {
+		t.Fatalf("Prompt() after ClearCheckpoint() error = %v", err)
+	}
+	persisted, err := store.Load(ctx, "clear-interrupt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.Messages) != 5 || persisted.Messages[2].Content != abandonedToolCallResult {
+		t.Fatalf("persisted history = %#v", persisted.Messages)
 	}
 }
 
