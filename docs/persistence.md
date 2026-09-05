@@ -82,6 +82,8 @@ Every successful `Load` must return a non-nil object whose ID exactly matches th
 
 Built-in stores use `Session.Revision` for optimistic concurrency. If two Agents restore the same revision, the stale writer receives `ErrSessionConflict` instead of silently overwriting newer history.
 
+All file-store instances that resolve to the same directory share an in-process lock. Creating two stores for one directory therefore preserves revision checks for sessions and goals, exclusive goal leases, immutable tool-result creation, and checkpoint replacement. A built-in session deletion also fences concurrent saves until its session and associated resources have been removed; a stale save then fails with `ErrSessionConflict` instead of recreating or disappearing behind the deletion.
+
 Custom stores should provide equivalent compare-and-swap behavior. AgentKit intentionally does not merge divergent conversations because a generic merge can reorder tool calls or corrupt meaning.
 
 The file store targets a local single-process worker. A multi-replica service should implement session, checkpoint, goal, and lease updates transactionally in a shared database.
