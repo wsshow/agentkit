@@ -686,6 +686,40 @@ func (r *GoalRunner) Clear(ctx context.Context, id string) (retErr error) {
 
 // Retry 明确允许重新执行一个无法确认是否产生副作用的未完成步骤。
 func (r *GoalRunner) Retry(ctx context.Context, id string) (out *GoalRunResult, retErr error) {
+	prepared, err := r.prepareRetry(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { retErr = errors.Join(retErr, prepared.finish()) }()
+	return r.runRetry(prepared)
+}
+
+// RetryAsync 持久化显式重试状态后，在后台重新执行无法确认是否产生副作用的步骤。
+func (r *GoalRunner) RetryAsync(ctx context.Context, id string) (*GoalRun, error) {
+	prepared, err := r.prepareRetry(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	run := &GoalRun{runner: r, id: id, done: make(chan struct{})}
+	if prepared.terminalErr != nil {
+		run.complete(&GoalRunResult{Goal: cloneGoal(prepared.goal)}, errors.Join(prepared.terminalErr, prepared.finish()))
+		return run, nil
+	}
+	go func() {
+		result, runErr := r.runRetry(prepared)
+		run.complete(result, errors.Join(runErr, prepared.finish()))
+	}()
+	return run, nil
+}
+
+type preparedGoalRetry struct {
+	ctx         context.Context
+	finish      func() error
+	goal        *Goal
+	terminalErr error
+}
+
+func (r *GoalRunner) prepareRetry(ctx context.Context, id string) (prepared *preparedGoalRetry, retErr error) {
 	if err := validateGoalContextAndID(ctx, id); err != nil {
 		return nil, err
 	}
@@ -693,13 +727,21 @@ func (r *GoalRunner) Retry(ctx context.Context, id string) (out *GoalRunResult, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() { retErr = errors.Join(retErr, finish()) }()
+	owned := false
+	defer func() {
+		if !owned {
+			retErr = errors.Join(retErr, finish())
+		}
+	}()
 	goal, err := r.loadForAgent(runCtx, id)
 	if err != nil {
 		return nil, err
 	}
+	prepared = &preparedGoalRetry{ctx: runCtx, finish: finish, goal: goal}
 	if goal.Status != GoalStatusBlocked || !goal.InProgress {
-		return &GoalRunResult{Goal: goal}, errors.New("agentkit: goal has no uncertain step to retry")
+		prepared.terminalErr = errors.New("agentkit: goal has no uncertain step to retry")
+		owned = true
+		return prepared, nil
 	}
 	goal.Status = GoalStatusActive
 	goal.InProgress = false
@@ -708,7 +750,15 @@ func (r *GoalRunner) Retry(ctx context.Context, id string) (out *GoalRunResult, 
 	if err := r.save(runCtx, goal); err != nil {
 		return nil, err
 	}
-	return r.drive(runCtx, goal, nil)
+	owned = true
+	return prepared, nil
+}
+
+func (r *GoalRunner) runRetry(prepared *preparedGoalRetry) (*GoalRunResult, error) {
+	if prepared.terminalErr != nil {
+		return &GoalRunResult{Goal: cloneGoal(prepared.goal)}, prepared.terminalErr
+	}
+	return r.drive(prepared.ctx, prepared.goal, nil)
 }
 
 func validateGoalRequest(ctx context.Context, request GoalRequest) error {

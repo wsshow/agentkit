@@ -169,6 +169,13 @@ func TestGoalRunnerResumeInterruptAsyncPersistsAndCopiesTargets(t *testing.T) {
 	ctx := context.Background()
 	resumeStarted := make(chan struct{})
 	readTarget := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-readTarget:
+		default:
+			close(readTarget)
+		}
+	})
 	tool := MustMockTool("approve", "wait for approval", func(ctx context.Context, _ string) (string, error) {
 		wasInterrupted, _, _ := GetInterruptState[any](ctx)
 		if !wasInterrupted {
@@ -235,5 +242,78 @@ func TestGoalRunnerResumeInterruptAsyncPersistsAndCopiesTargets(t *testing.T) {
 	result, err := run.Wait()
 	if err != nil || result.Goal.Status != GoalStatusCompleted || result.LastRun.Text != "approved" {
 		t.Fatalf("Wait() = %#v, %v, want approved completion", result, err)
+	}
+}
+
+func TestGoalRunnerRetryAsyncPersistsAndRunsExplicitRetry(t *testing.T) {
+	ctx := context.Background()
+	sessions := NewMemorySessionStore()
+	toolStarted := make(chan struct{})
+	releaseTool := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-releaseTool:
+		default:
+			close(releaseTool)
+		}
+	})
+	tool := MustMockTool("deploy", "deploy after explicit retry", func(ctx context.Context, _ string) (string, error) {
+		close(toolStarted)
+		select {
+		case <-releaseTool:
+			return "deployed", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	const callID = "retry-deploy"
+	agent, err := New(ctx, &Config{
+		Name: "worker",
+		Model: NewMockChatModel(
+			MockModelToolCallWithID(callID, "deploy", `""`),
+			MockModelTextAfterToolResult(callID),
+		),
+		Tools:   MockTools(tool),
+		Session: &SessionConfig{ID: "async-retry", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	if err := sessions.GoalStore().Save(ctx, &Goal{
+		ID: "retry", SessionID: "async-retry", Objective: "deploy",
+		Status: GoalStatusBlocked, MaxIterations: 3, InProgress: true,
+		AttemptIteration: 1, PendingPrompt: "deploy",
+	}); err != nil {
+		t.Fatalf("save uncertain goal: %v", err)
+	}
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(context.Context, GoalEvaluation) (GoalDecision, error) {
+			return GoalDecision{Complete: true, Reason: "deployed"}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+	run, err := runner.RetryAsync(ctx, "retry")
+	if err != nil {
+		t.Fatalf("RetryAsync() error = %v", err)
+	}
+	if run.ID() != "retry" {
+		t.Fatalf("GoalRun.ID() = %q, want retry", run.ID())
+	}
+	select {
+	case <-toolStarted:
+	case <-time.After(time.Second):
+		t.Fatal("background explicit retry did not start")
+	}
+	saved, err := runner.Get(ctx, "retry")
+	if err != nil || saved.Status != GoalStatusActive || !saved.InProgress || saved.LastReason != "explicit retry requested" {
+		t.Fatalf("Get() = %#v, %v, want persisted explicit retry", saved, err)
+	}
+	close(releaseTool)
+	result, err := run.Wait()
+	if err != nil || result.Goal.Status != GoalStatusCompleted || result.LastRun.Text != "deployed" {
+		t.Fatalf("Wait() = %#v, %v, want deployed completion", result, err)
 	}
 }

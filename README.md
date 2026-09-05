@@ -386,6 +386,7 @@ err = run.Pause(controlCtx)             // persists pause, then cancels active w
 resumed, err := goals.ResumeAsync(workerCtx, goalID)
 resumed, err = goals.ResumePendingAsync(workerCtx) // only when exactly one is unfinished
 resumed, err = goals.ResumeInterruptAsync(workerCtx, goalID, targets)
+retried, err := goals.RetryAsync(workerCtx, goalID) // explicit replay after ErrGoalRecoveryRequired
 ```
 
 Use an application or worker lifetime context for the async methods, rather than a short HTTP request context. Live callers can use `Done`/`Wait`; disconnected clients can reconnect with the returned ID and read the same durable state through `Get` or `List`.
@@ -394,7 +395,7 @@ Recreate the file store and Agent with the same session ID after a process resta
 
 Every successfully committed state change emits `EventGoalUpdate` through `Agent.Subscribe`. Its `Event.Goal` is an isolated snapshot with the same revision as durable storage, so applications can update live status without polling and use `Get` after reconnecting.
 
-Goal state is committed before work, after Agent output, and after evaluation. If saved session history proves that a step finished, `Resume` evaluates it without repeating the work. If the process could have exited after an external side effect but before session progress was saved, the goal becomes `blocked` with `ErrGoalRecoveryRequired`; only the explicit `Retry` method may replay that uncertain step. This favors safety over pretending to provide exactly-once external effects.
+Goal state is committed before work, after Agent output, and after evaluation. If saved session history proves that a step finished, `Resume` evaluates it without repeating the work. If the process could have exited after an external side effect but before session progress was saved, the goal becomes `blocked` with `ErrGoalRecoveryRequired`; only the explicit `Retry` or `RetryAsync` method may replay that uncertain step. This favors safety over pretending to provide exactly-once external effects.
 
 Tools that perform external side effects can cheaply participate in durable deduplication:
 

@@ -386,6 +386,7 @@ err = run.Pause(controlCtx)             // 先持久化暂停，再取消活跃�
 resumed, err := goals.ResumeAsync(workerCtx, goalID)
 resumed, err = goals.ResumePendingAsync(workerCtx) // 仅适用于恰好一个未完成目标
 resumed, err = goals.ResumeInterruptAsync(workerCtx, goalID, targets)
+retried, err := goals.RetryAsync(workerCtx, goalID) // ErrGoalRecoveryRequired 后显式重放
 ```
 
 异步方法应传入应用或 worker 生命周期的 context，而不是短暂的 HTTP 请求 context。在线调用方可使用 `Done`/`Wait`；客户端断线后可用返回的 ID 重连，并通过 `Get` 或 `List` 读取同一份持久化状态。
@@ -394,7 +395,7 @@ resumed, err = goals.ResumeInterruptAsync(workerCtx, goalID, targets)
 
 每次状态成功落盘后，都会通过 `Agent.Subscribe` 发出 `EventGoalUpdate`。其中的 `Event.Goal` 是与持久化版本一致、彼此隔离的快照，应用在线时无需轮询即可更新进度，断线重连后再用 `Get` 对齐最新状态。
 
-目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
+目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 或 `RetryAsync` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
 
 执行外部副作用的工具可以用极低成本参与持久化去重：
 
