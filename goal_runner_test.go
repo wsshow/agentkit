@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -507,6 +508,79 @@ func TestGoalRunnerRecoversSavedAssistantResultWithoutRepeatingWork(t *testing.T
 	}
 	if len(model.Calls()) != 0 {
 		t.Fatal("saved assistant result must not repeat model work")
+	}
+}
+
+func TestGoalRunnerContinuesAfterSavedToolResultWithoutRepeatingTool(t *testing.T) {
+	ctx := context.Background()
+	sessions := NewMemorySessionStore()
+	const callID = "published-release"
+	if err := sessions.Save(ctx, &Session{
+		ID: "tool-result-session",
+		Messages: []*schema.Message{
+			schema.UserMessage("publish the release"),
+			schema.AssistantMessage("", []schema.ToolCall{{
+				ID: callID,
+				Function: schema.FunctionCall{
+					Name:      "publish_release",
+					Arguments: `{"version":"v2"}`,
+				},
+			}}),
+			schema.ToolMessage("release v2 published", callID, schema.WithToolName("publish_release")),
+		},
+	}); err != nil {
+		t.Fatalf("save session with tool result: %v", err)
+	}
+	if err := sessions.GoalStore().Save(ctx, &Goal{
+		ID: "tool-result", SessionID: "tool-result-session", Objective: "publish the release",
+		Status: GoalStatusActive, MaxIterations: 3, InProgress: true,
+		AttemptIteration: 1, HistoryMessageCount: 0, PendingPrompt: "publish the release",
+	}); err != nil {
+		t.Fatalf("save in-progress goal: %v", err)
+	}
+	var executions atomic.Int32
+	publishTool := MustMockTool("publish_release", "publish a release", func(context.Context, string) (string, error) {
+		executions.Add(1)
+		return "unexpected duplicate publication", nil
+	})
+	model := NewMockChatModel(MockExpect(MockModelText("publication verified"), func(call MockModelCall) error {
+		if result, ok := mockInputToolResult(call.Input, callID); !ok || result != "release v2 published" {
+			return errors.New("saved tool result was not supplied to the model")
+		}
+		return nil
+	}))
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: model, Tools: MockTools(publishTool),
+		Session: &SessionConfig{ID: "tool-result-session", Store: sessions},
+	})
+	if err != nil {
+		t.Fatalf("create restored agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(_ context.Context, evaluation GoalEvaluation) (GoalDecision, error) {
+			if evaluation.LastResponse != "publication verified" {
+				t.Fatalf("recovered response = %q", evaluation.LastResponse)
+			}
+			return GoalDecision{Complete: true, Reason: "publication is verified"}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create restored goal runner: %v", err)
+	}
+
+	result, err := runner.Resume(ctx, "tool-result")
+	if err != nil {
+		t.Fatalf("resume after saved tool result: %v", err)
+	}
+	if result.Goal.Status != GoalStatusCompleted || result.Goal.Iteration != 1 {
+		t.Fatalf("unexpected restored goal: %#v", result.Goal)
+	}
+	if executions.Load() != 0 {
+		t.Fatalf("saved side-effect tool executed %d extra times", executions.Load())
+	}
+	if calls := model.Calls(); len(calls) != 1 {
+		t.Fatalf("model calls = %d, want one continuation", len(calls))
 	}
 }
 
