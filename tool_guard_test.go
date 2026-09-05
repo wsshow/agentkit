@@ -151,6 +151,102 @@ func TestToolPolicyBeforeToolPanicBecomesError(t *testing.T) {
 	}
 }
 
+func TestToolPolicyIsolatesToolEntryPointPanics(t *testing.T) {
+	ctx := context.Background()
+	input := &ToolInput{Name: "broken", CallID: "call-1"}
+	middleware := (*ToolPolicy)(nil).executionMiddleware()
+
+	invokable := middleware.Invokable(func(context.Context, *ToolInput) (*ToolOutput, error) {
+		panic("broken invokable tool")
+	})
+	if _, err := invokable(ctx, input); !errors.Is(err, ErrToolExecutionPanic) {
+		t.Fatalf("Invokable() error = %v, want ErrToolExecutionPanic", err)
+	}
+
+	streamable := middleware.Streamable(func(context.Context, *ToolInput) (*StreamToolOutput, error) {
+		panic("broken streamable tool")
+	})
+	if _, err := streamable(ctx, input); !errors.Is(err, ErrToolExecutionPanic) {
+		t.Fatalf("Streamable() error = %v, want ErrToolExecutionPanic", err)
+	}
+
+	enhanced := middleware.EnhancedInvokable(func(context.Context, *ToolInput) (*EnhancedInvokableToolOutput, error) {
+		panic("broken enhanced tool")
+	})
+	if _, err := enhanced(ctx, input); !errors.Is(err, ErrToolExecutionPanic) {
+		t.Fatalf("EnhancedInvokable() error = %v, want ErrToolExecutionPanic", err)
+	}
+
+	enhancedStream := middleware.EnhancedStreamable(func(context.Context, *ToolInput) (*EnhancedStreamableToolOutput, error) {
+		panic("broken enhanced stream tool")
+	})
+	if _, err := enhancedStream(ctx, input); !errors.Is(err, ErrToolExecutionPanic) {
+		t.Fatalf("EnhancedStreamable() error = %v, want ErrToolExecutionPanic", err)
+	}
+}
+
+func TestAgentReturnsToolImplementationPanicAsError(t *testing.T) {
+	ctx := context.Background()
+	tool := MustMockTool("broken", "panic during execution", func(context.Context, string) (string, error) {
+		panic("broken tool")
+	})
+	agent, err := New(ctx, &Config{
+		Name:  "assistant",
+		Model: NewMockChatModel(MockModelToolCallWithID("broken-call", "broken", `""`)),
+		Tools: MockTools(tool),
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+
+	if _, err := agent.Ask(ctx, "run broken tool"); !errors.Is(err, ErrToolExecutionPanic) {
+		t.Fatalf("Ask() error = %v, want ErrToolExecutionPanic", err)
+	}
+}
+
+func TestToolPolicyIsolatesTextStreamReceivePanic(t *testing.T) {
+	ctx := context.Background()
+	source := schema.StreamReaderWithConvert(
+		schema.StreamReaderFromArray([]string{"chunk"}),
+		func(string) (string, error) {
+			panic("broken text stream")
+		},
+	)
+	endpoint := (*ToolPolicy)(nil).executionMiddleware().Streamable(func(context.Context, *ToolInput) (*StreamToolOutput, error) {
+		return &StreamToolOutput{Result: source}, nil
+	})
+	output, err := endpoint(ctx, &ToolInput{Name: "broken_stream", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("Streamable() error = %v", err)
+	}
+	defer output.Result.Close()
+	if _, err := output.Result.Recv(); !errors.Is(err, ErrToolExecutionPanic) {
+		t.Fatalf("Recv() error = %v, want ErrToolExecutionPanic", err)
+	}
+}
+
+func TestToolPolicyIsolatesEnhancedStreamReceivePanic(t *testing.T) {
+	ctx := context.Background()
+	source := schema.StreamReaderWithConvert(
+		schema.StreamReaderFromArray([]*schema.ToolResult{{}}),
+		func(*schema.ToolResult) (*schema.ToolResult, error) {
+			panic("broken enhanced stream")
+		},
+	)
+	endpoint := (*ToolPolicy)(nil).executionMiddleware().EnhancedStreamable(func(context.Context, *ToolInput) (*EnhancedStreamableToolOutput, error) {
+		return &EnhancedStreamableToolOutput{Result: source}, nil
+	})
+	output, err := endpoint(ctx, &ToolInput{Name: "broken_stream", CallID: "call-1"})
+	if err != nil {
+		t.Fatalf("EnhancedStreamable() error = %v", err)
+	}
+	defer output.Result.Close()
+	if _, err := output.Result.Recv(); !errors.Is(err, ErrToolExecutionPanic) {
+		t.Fatalf("Recv() error = %v, want ErrToolExecutionPanic", err)
+	}
+}
+
 func TestToolPolicyAfterToolPanicIsReportedWithoutFailingRun(t *testing.T) {
 	ctx := context.Background()
 	tool := MustMockTool("safe_result", "return result", func(context.Context, string) (string, error) {

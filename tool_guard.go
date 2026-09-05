@@ -3,6 +3,7 @@ package agentkit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 	"unicode/utf8"
@@ -15,6 +16,9 @@ import (
 const DefaultToolResultMaxChars = 100_000
 
 const toolResultTruncatedMarker = "\n...[tool result truncated]"
+
+// ErrToolExecutionPanic 表示用户工具实现发生 panic。
+var ErrToolExecutionPanic = errors.New("agentkit: tool execution panicked")
 
 // ToolInvocation 描述一次即将执行的工具调用。
 type ToolInvocation struct {
@@ -119,6 +123,32 @@ func invocationFromInput(input *compose.ToolInput) ToolInvocation {
 	return ToolInvocation{Name: input.Name, Arguments: input.Arguments, CallID: input.CallID}
 }
 
+func recoverToolExecutionPanic(err *error) {
+	if value := recover(); value != nil {
+		*err = fmt.Errorf("%w: %v", ErrToolExecutionPanic, value)
+	}
+}
+
+func invokeTool(next compose.InvokableToolEndpoint, ctx context.Context, input *compose.ToolInput) (output *compose.ToolOutput, err error) {
+	defer recoverToolExecutionPanic(&err)
+	return next(ctx, input)
+}
+
+func invokeStreamTool(next compose.StreamableToolEndpoint, ctx context.Context, input *compose.ToolInput) (output *compose.StreamToolOutput, err error) {
+	defer recoverToolExecutionPanic(&err)
+	return next(ctx, input)
+}
+
+func invokeEnhancedTool(next compose.EnhancedInvokableToolEndpoint, ctx context.Context, input *compose.ToolInput) (output *compose.EnhancedInvokableToolOutput, err error) {
+	defer recoverToolExecutionPanic(&err)
+	return next(ctx, input)
+}
+
+func invokeEnhancedStreamTool(next compose.EnhancedStreamableToolEndpoint, ctx context.Context, input *compose.ToolInput) (output *compose.EnhancedStreamableToolOutput, err error) {
+	defer recoverToolExecutionPanic(&err)
+	return next(ctx, input)
+}
+
 func (p *ToolPolicy) guardInvokable(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
 	return func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
 		runCtx, cancel, call, started, err := p.startTool(ctx, input)
@@ -127,7 +157,7 @@ func (p *ToolPolicy) guardInvokable(next compose.InvokableToolEndpoint) compose.
 		}
 		defer cancel()
 
-		output, err := next(runCtx, input)
+		output, err := invokeTool(next, runCtx, input)
 		if err == nil && runCtx.Err() != nil {
 			err = runCtx.Err()
 			output = nil
@@ -148,7 +178,7 @@ func (p *ToolPolicy) guardStreamable(next compose.StreamableToolEndpoint) compos
 		if err != nil {
 			return nil, err
 		}
-		output, err := next(runCtx, input)
+		output, err := invokeStreamTool(next, runCtx, input)
 		if err == nil && runCtx.Err() != nil {
 			err = runCtx.Err()
 		}
@@ -174,7 +204,7 @@ func (p *ToolPolicy) guardEnhancedInvokable(next compose.EnhancedInvokableToolEn
 		}
 		defer cancel()
 
-		output, err := next(runCtx, input)
+		output, err := invokeEnhancedTool(next, runCtx, input)
 		if err == nil && runCtx.Err() != nil {
 			err = runCtx.Err()
 			output = nil
@@ -196,7 +226,7 @@ func (p *ToolPolicy) guardEnhancedStreamable(next compose.EnhancedStreamableTool
 		if err != nil {
 			return nil, err
 		}
-		output, err := next(runCtx, input)
+		output, err := invokeEnhancedStreamTool(next, runCtx, input)
 		if err == nil && runCtx.Err() != nil {
 			err = runCtx.Err()
 		}
@@ -262,6 +292,12 @@ func guardTextStream(ctx context.Context, source *schema.StreamReader[string], m
 		defer writer.Close()
 		outcome := ToolOutcome{}
 		defer func() { finish(outcome) }()
+		defer func() {
+			if value := recover(); value != nil {
+				outcome.Err = fmt.Errorf("%w: %v", ErrToolExecutionPanic, value)
+				writer.Send("", outcome.Err)
+			}
+		}()
 		remaining := maxChars
 		for {
 			chunk, err := source.Recv()
@@ -301,6 +337,12 @@ func guardToolResultStream(ctx context.Context, source *schema.StreamReader[*sch
 		defer writer.Close()
 		outcome := ToolOutcome{}
 		defer func() { finish(outcome) }()
+		defer func() {
+			if value := recover(); value != nil {
+				outcome.Err = fmt.Errorf("%w: %v", ErrToolExecutionPanic, value)
+				writer.Send(nil, outcome.Err)
+			}
+		}()
 		remaining := maxChars
 		for {
 			chunk, err := source.Recv()
