@@ -59,6 +59,159 @@ func TestGoalRunnerCompletesAfterMultipleIterations(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerExclusivelyOwnsAgentBetweenSteps(t *testing.T) {
+	ctx := context.Background()
+	evaluationStarted := make(chan struct{})
+	releaseEvaluation := make(chan struct{})
+	model := NewMockChatModel(
+		MockModelText("goal work finished"),
+		MockModelText("ordinary work after goal"),
+	)
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: model,
+		Session: &SessionConfig{ID: "exclusive-goal-session", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(ctx context.Context, _ GoalEvaluation) (GoalDecision, error) {
+			close(evaluationStarted)
+			select {
+			case <-releaseEvaluation:
+				return GoalDecision{Complete: true, Reason: "verified"}, nil
+			case <-ctx.Done():
+				return GoalDecision{}, ctx.Err()
+			}
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create goal runner: %v", err)
+	}
+
+	type outcome struct {
+		result *GoalRunResult
+		err    error
+	}
+	finished := make(chan outcome, 1)
+	go func() {
+		result, runErr := runner.Start(ctx, GoalRequest{ID: "exclusive", Objective: "finish goal work"})
+		finished <- outcome{result: result, err: runErr}
+	}()
+	waitForTestSignal(t, evaluationStarted, "goal evaluation")
+	if _, err := agent.Ask(ctx, "must not enter the goal conversation"); !errors.Is(err, ErrAgentRunning) {
+		close(releaseEvaluation)
+		t.Fatalf("Ask() during goal evaluation error = %v, want ErrAgentRunning", err)
+	}
+	close(releaseEvaluation)
+	select {
+	case got := <-finished:
+		if got.err != nil || got.result == nil || got.result.Goal.Status != GoalStatusCompleted {
+			t.Fatalf("goal outcome = %#v, %v", got.result, got.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("goal did not finish")
+	}
+	result, err := agent.Ask(ctx, "ordinary work is allowed now")
+	if err != nil || result.Text != "ordinary work after goal" {
+		t.Fatalf("Ask() after goal = %#v, %v", result, err)
+	}
+}
+
+func TestAgentAbortStopsGoalDuringEvaluation(t *testing.T) {
+	ctx := context.Background()
+	evaluationStarted := make(chan struct{})
+	model := NewMockChatModel(
+		MockModelText("goal work finished"),
+		MockModelText("ordinary work after abort"),
+	)
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: model,
+		Session: &SessionConfig{ID: "abort-goal-session", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(ctx context.Context, _ GoalEvaluation) (GoalDecision, error) {
+			close(evaluationStarted)
+			<-ctx.Done()
+			return GoalDecision{}, ctx.Err()
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create goal runner: %v", err)
+	}
+
+	finished := make(chan error, 1)
+	go func() {
+		_, runErr := runner.Start(ctx, GoalRequest{ID: "abort-evaluation", Objective: "finish goal work"})
+		finished <- runErr
+	}()
+	waitForTestSignal(t, evaluationStarted, "goal evaluation")
+	abortCtx, cancelAbort := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelAbort()
+	if err := agent.AbortContext(abortCtx); err != nil {
+		t.Fatalf("AbortContext() error = %v", err)
+	}
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("goal error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("goal did not stop after Agent abort")
+	}
+	result, err := agent.Ask(ctx, "ordinary work is allowed after abort")
+	if err != nil || result.Text != "ordinary work after abort" {
+		t.Fatalf("Ask() after abort = %#v, %v", result, err)
+	}
+}
+
+func TestAgentCloseStopsGoalDuringEvaluation(t *testing.T) {
+	ctx := context.Background()
+	evaluationStarted := make(chan struct{})
+	agent, err := New(ctx, &Config{
+		Name: "worker", Model: NewMockChatModel(MockModelText("goal work finished")),
+		Session: &SessionConfig{ID: "close-goal-session", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Evaluator: GoalEvaluatorFunc(func(ctx context.Context, _ GoalEvaluation) (GoalDecision, error) {
+			close(evaluationStarted)
+			<-ctx.Done()
+			return GoalDecision{}, ctx.Err()
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create goal runner: %v", err)
+	}
+
+	finished := make(chan error, 1)
+	go func() {
+		_, runErr := runner.Start(ctx, GoalRequest{ID: "close-evaluation", Objective: "finish goal work"})
+		finished <- runErr
+	}()
+	waitForTestSignal(t, evaluationStarted, "goal evaluation")
+	closeCtx, cancelClose := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelClose()
+	if err := agent.CloseContext(closeCtx); err != nil {
+		t.Fatalf("CloseContext() error = %v", err)
+	}
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("goal error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("goal did not stop after Agent close")
+	}
+}
+
 func TestGoalRunnerEmitsPersistedGoalUpdates(t *testing.T) {
 	ctx := context.Background()
 	sessions := NewMemorySessionStore()

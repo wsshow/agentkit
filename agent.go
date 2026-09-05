@@ -124,7 +124,10 @@ type Agent struct {
 	running  bool          // 是否正在执行
 	closed   bool          // 是否已关闭
 	done     chan struct{} // 执行完成信号
-	inTurn   atomic.Bool   // turn 状态跟踪（原子操作，线程安全）
+	goalRun  string        // 独占当前 Agent 的持久化目标 ID
+	goalDone chan struct{} // 整个目标推进周期完成信号
+	goalStop context.CancelFunc
+	inTurn   atomic.Bool // turn 状态跟踪（原子操作，线程安全）
 
 	history                  []*schema.Message // 完整对话历史（含 assistant/tool），用于展示和持久化
 	contextHistory           []*schema.Message // 发送给模型的上下文，压缩前与 history 相同
@@ -692,14 +695,18 @@ func (a *Agent) Subscribe(fn Subscriber) func() {
 func (a *Agent) Cancel() {
 	a.mu.Lock()
 	cancel := a.cancelFn
+	stopGoal := a.goalStop
 	a.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	if stopGoal != nil {
+		stopGoal()
+	}
 }
 
 // Abort 取消当前执行并等待完成。
-// Subscribe 回调与执行处于同一 goroutine，回调内请使用 Cancel 以避免等待自身。
+// Subscribe 或 GoalEvaluator 回调与执行处于同一 goroutine，回调内请使用 Cancel 以避免等待自身。
 func (a *Agent) Abort() {
 	_ = a.AbortContext(context.Background())
 }
@@ -712,11 +719,18 @@ func (a *Agent) AbortContext(ctx context.Context) error {
 	}
 	a.mu.Lock()
 	cancel := a.cancelFn
+	stopGoal := a.goalStop
 	done := a.done
+	if a.goalDone != nil {
+		done = a.goalDone
+	}
 	a.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
+	}
+	if stopGoal != nil {
+		stopGoal()
 	}
 	if done != nil {
 		select {
@@ -759,9 +773,13 @@ func (a *Agent) startClose() <-chan struct{} {
 		a.mu.Lock()
 		a.closed = true
 		cancel := a.cancelFn
+		stopGoal := a.goalStop
 		a.mu.Unlock()
 		if cancel != nil {
 			cancel()
+		}
+		if stopGoal != nil {
+			stopGoal()
 		}
 		connections := append([]managedMCPConnection(nil), a.mcpConnections...)
 		go func() {
@@ -1045,6 +1063,12 @@ func (a *Agent) startRun(ctx context.Context) (context.Context, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if a.goalRun != "" {
+		goal, ok := CurrentGoalRun(ctx)
+		if !ok || goal.GoalID != a.goalRun {
+			return nil, ErrAgentRunning
+		}
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	if a.subAgents != nil {
 		a.subAgents.resetUsage()
@@ -1054,6 +1078,32 @@ func (a *Agent) startRun(ctx context.Context) (context.Context, error) {
 	a.done = make(chan struct{})
 	a.cancelFn = cancel
 	return runCtx, nil
+}
+
+func (a *Agent) reserveGoalRun(id string, stop context.CancelFunc) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return ErrAgentClosed
+	}
+	if a.running || a.goalRun != "" {
+		return ErrAgentRunning
+	}
+	a.goalRun = id
+	a.goalDone = make(chan struct{})
+	a.goalStop = stop
+	return nil
+}
+
+func (a *Agent) releaseGoalRun(id string) {
+	a.mu.Lock()
+	if a.goalRun == id {
+		a.goalRun = ""
+		a.goalStop = nil
+		close(a.goalDone)
+		a.goalDone = nil
+	}
+	a.mu.Unlock()
 }
 
 // endRun 标记 Agent 执行完成。

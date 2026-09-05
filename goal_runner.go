@@ -792,17 +792,24 @@ func (r *GoalRunner) begin(ctx context.Context, id string) (context.Context, fun
 	if !r.runMu.TryLock() {
 		return nil, nil, ErrGoalRunning
 	}
+	runCtx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(context.Canceled) }
+	if err := r.agent.reserveGoalRun(id, cancel); err != nil {
+		cancel()
+		r.runMu.Unlock()
+		return nil, nil, err
+	}
 	var lease *GoalLease
 	if r.leaseStore != nil {
 		var err error
-		lease, err = acquireGoalLease(ctx, r.leaseStore, id, r.workerID, r.leaseDuration)
+		lease, err = acquireGoalLease(runCtx, r.leaseStore, id, r.workerID, r.leaseDuration)
 		if err != nil {
+			cancel()
+			r.agent.releaseGoalRun(id)
 			r.runMu.Unlock()
 			return nil, nil, err
 		}
 	}
-	runCtx, cancelCause := context.WithCancelCause(ctx)
-	cancel := func() { cancelCause(context.Canceled) }
 	heartbeat := r.startLeaseHeartbeat(runCtx, cancelCause, lease)
 	r.activeMu.Lock()
 	r.activeID = id
@@ -818,6 +825,7 @@ func (r *GoalRunner) begin(ctx context.Context, id string) (context.Context, fun
 		r.lease = nil
 		r.activeMu.Unlock()
 		releaseErr := r.releaseLease(context.WithoutCancel(ctx), lease)
+		r.agent.releaseGoalRun(id)
 		r.runMu.Unlock()
 		return errors.Join(heartbeatErr, releaseErr)
 	}
