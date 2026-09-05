@@ -26,6 +26,26 @@ type GoalLease struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// GoalLeaseHeldError 提供当前持有者和到期时间，便于调度器安全安排重试。
+// 可同时通过 errors.Is(err, ErrGoalLeaseHeld) 和 errors.As 使用。
+type GoalLeaseHeldError struct {
+	Lease GoalLease
+}
+
+// Error 返回包含持有者和到期时间的租约冲突信息。
+func (e *GoalLeaseHeldError) Error() string {
+	if e == nil {
+		return ErrGoalLeaseHeld.Error()
+	}
+	return fmt.Sprintf("%s: goal %q is owned by worker %q until %s",
+		ErrGoalLeaseHeld, e.Lease.GoalID, e.Lease.WorkerID, e.Lease.ExpiresAt.Format(time.RFC3339Nano))
+}
+
+// Unwrap 支持 errors.Is(err, ErrGoalLeaseHeld)。
+func (e *GoalLeaseHeldError) Unwrap() error {
+	return ErrGoalLeaseHeld
+}
+
 // GoalLeaseStore 为 GoalStore 增加原子 worker 所有权和防陈旧写入能力。
 // AcquireGoalLease 对未过期租约必须返回包装 ErrGoalLeaseHeld 的错误；过期租约可被接管。
 // RenewGoalLease、SaveGoalWithLease 和 DeleteGoalWithLease 必须校验有效 Token，
@@ -218,8 +238,10 @@ func validateGoalLease(ctx context.Context, lease *GoalLease) error {
 }
 
 func heldGoalLeaseError(lease *GoalLease) error {
-	return fmt.Errorf("%w: goal %q is owned by worker %q until %s",
-		ErrGoalLeaseHeld, lease.GoalID, lease.WorkerID, lease.ExpiresAt.Format(time.RFC3339Nano))
+	if lease == nil {
+		return ErrGoalLeaseHeld
+	}
+	return &GoalLeaseHeldError{Lease: *cloneGoalLease(lease)}
 }
 
 func lostGoalLeaseError(lease *GoalLease) error {

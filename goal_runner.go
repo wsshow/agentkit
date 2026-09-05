@@ -10,9 +10,13 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 )
 
 const defaultGoalMaxIterations = 20
+
+// DefaultGoalLeaseDuration 是 GoalRunner 自动续期的默认 worker 租约时长。
+const DefaultGoalLeaseDuration = time.Minute
 
 var (
 	// ErrGoalExists 表示相同 ID 的目标已经存在，应改用 Resume。
@@ -149,6 +153,12 @@ type GoalRunnerConfig struct {
 	Store         GoalStore
 	Evaluator     GoalEvaluator
 	MaxIterations int
+	// WorkerID 用于租约诊断；为空时自动生成当前 GoalRunner 实例的唯一 ID。
+	WorkerID string
+	// LeaseDuration 是 worker 租约时长，默认一分钟；续期频率约为其三分之一。
+	LeaseDuration time.Duration
+	// RequireLease 要求 Store 实现 GoalLeaseStore，避免生产环境意外退化为单 worker 模式。
+	RequireLease bool
 }
 
 // GoalRunResult 汇总一次 Start 或 Resume 调用。
@@ -164,11 +174,15 @@ type GoalRunner struct {
 	store         GoalStore
 	evaluator     GoalEvaluator
 	maxIterations int
+	leaseStore    GoalLeaseStore
+	leaseDuration time.Duration
+	workerID      string
 
 	runMu    sync.Mutex
 	activeMu sync.Mutex
 	activeID string
 	cancel   context.CancelFunc
+	lease    *GoalLease
 }
 
 // NewGoalRunner 创建目标执行器。Store 和 Evaluator 默认复用 Agent 的 SessionStore 与模型。
@@ -185,6 +199,12 @@ func NewGoalRunner(agent *Agent, cfg *GoalRunnerConfig) (*GoalRunner, error) {
 	}
 	if cfg.MaxIterations < 0 {
 		return nil, fmt.Errorf("agentkit: goal max iterations must not be negative: %d", cfg.MaxIterations)
+	}
+	if cfg.LeaseDuration < 0 {
+		return nil, fmt.Errorf("agentkit: goal lease duration must not be negative: %s", cfg.LeaseDuration)
+	}
+	if cfg.WorkerID != strings.TrimSpace(cfg.WorkerID) {
+		return nil, fmt.Errorf("agentkit: goal worker ID must not have surrounding whitespace: %q", cfg.WorkerID)
 	}
 	store := cfg.Store
 	if store == nil {
@@ -206,13 +226,30 @@ func NewGoalRunner(agent *Agent, cfg *GoalRunnerConfig) (*GoalRunner, error) {
 	if maxIterations == 0 {
 		maxIterations = defaultGoalMaxIterations
 	}
+	leaseStore, _ := store.(GoalLeaseStore)
+	if cfg.RequireLease && leaseStore == nil {
+		return nil, errors.New("agentkit: goal lease store is required")
+	}
+	leaseDuration := cfg.LeaseDuration
+	if leaseDuration == 0 {
+		leaseDuration = DefaultGoalLeaseDuration
+	}
+	workerID := cfg.WorkerID
+	if workerID == "" {
+		name := strings.TrimSpace(agent.Name())
+		if name == "" {
+			name = "worker"
+		}
+		workerID = name + "/" + uuid.NewString()
+	}
 	return &GoalRunner{
 		agent: agent, store: store, evaluator: evaluator, maxIterations: maxIterations,
+		leaseStore: leaseStore, leaseDuration: leaseDuration, workerID: workerID,
 	}, nil
 }
 
 // Start 创建并执行一个新目标。相同 ID 已存在时返回 ErrGoalExists，避免覆盖恢复点。
-func (r *GoalRunner) Start(ctx context.Context, request GoalRequest) (*GoalRunResult, error) {
+func (r *GoalRunner) Start(ctx context.Context, request GoalRequest) (out *GoalRunResult, retErr error) {
 	if err := validateGoalRequest(ctx, request); err != nil {
 		return nil, err
 	}
@@ -220,7 +257,7 @@ func (r *GoalRunner) Start(ctx context.Context, request GoalRequest) (*GoalRunRe
 	if err != nil {
 		return nil, err
 	}
-	defer finish()
+	defer func() { retErr = errors.Join(retErr, finish()) }()
 	if _, err := r.store.Load(runCtx, request.ID); err == nil {
 		return nil, fmt.Errorf("%w: %s", ErrGoalExists, request.ID)
 	} else if !errors.Is(err, ErrGoalNotFound) {
@@ -245,7 +282,7 @@ func (r *GoalRunner) Start(ctx context.Context, request GoalRequest) (*GoalRunRe
 }
 
 // Resume 从持久化状态继续自动推进目标。
-func (r *GoalRunner) Resume(ctx context.Context, id string) (*GoalRunResult, error) {
+func (r *GoalRunner) Resume(ctx context.Context, id string) (out *GoalRunResult, retErr error) {
 	if err := validateGoalContextAndID(ctx, id); err != nil {
 		return nil, err
 	}
@@ -253,7 +290,7 @@ func (r *GoalRunner) Resume(ctx context.Context, id string) (*GoalRunResult, err
 	if err != nil {
 		return nil, err
 	}
-	defer finish()
+	defer func() { retErr = errors.Join(retErr, finish()) }()
 	goal, err := r.loadForAgent(runCtx, id)
 	if err != nil {
 		return nil, err
@@ -288,7 +325,7 @@ func (r *GoalRunner) Resume(ctx context.Context, id string) (*GoalRunResult, err
 }
 
 // ResumeInterrupt 提交 HITL 数据后继续当前目标。
-func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map[string]any) (*GoalRunResult, error) {
+func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map[string]any) (out *GoalRunResult, retErr error) {
 	if err := validateGoalContextAndID(ctx, id); err != nil {
 		return nil, err
 	}
@@ -296,7 +333,7 @@ func (r *GoalRunner) ResumeInterrupt(ctx context.Context, id string, targets map
 	if err != nil {
 		return nil, err
 	}
-	defer finish()
+	defer func() { retErr = errors.Join(retErr, finish()) }()
 	goal, err := r.loadForAgent(runCtx, id)
 	if err != nil {
 		return nil, err
@@ -364,7 +401,7 @@ func (r *GoalRunner) Pause(ctx context.Context, id string) error {
 }
 
 // Clear 删除已停止的目标状态，但保留 Agent 会话历史。
-func (r *GoalRunner) Clear(ctx context.Context, id string) error {
+func (r *GoalRunner) Clear(ctx context.Context, id string) (retErr error) {
 	if err := validateGoalContextAndID(ctx, id); err != nil {
 		return err
 	}
@@ -374,11 +411,21 @@ func (r *GoalRunner) Clear(ctx context.Context, id string) error {
 	if running {
 		return ErrGoalRunning
 	}
+	if r.leaseStore != nil {
+		lease, err := r.leaseStore.AcquireGoalLease(ctx, id, r.workerID, r.leaseDuration)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			retErr = errors.Join(retErr, r.releaseLease(context.WithoutCancel(ctx), lease))
+		}()
+		return r.leaseStore.DeleteGoalWithLease(ctx, id, lease)
+	}
 	return r.store.Delete(ctx, id)
 }
 
 // Retry 明确允许重新执行一个无法确认是否产生副作用的未完成步骤。
-func (r *GoalRunner) Retry(ctx context.Context, id string) (*GoalRunResult, error) {
+func (r *GoalRunner) Retry(ctx context.Context, id string) (out *GoalRunResult, retErr error) {
 	if err := validateGoalContextAndID(ctx, id); err != nil {
 		return nil, err
 	}
@@ -386,7 +433,7 @@ func (r *GoalRunner) Retry(ctx context.Context, id string) (*GoalRunResult, erro
 	if err != nil {
 		return nil, err
 	}
-	defer finish()
+	defer func() { retErr = errors.Join(retErr, finish()) }()
 	goal, err := r.loadForAgent(runCtx, id)
 	if err != nil {
 		return nil, err
@@ -417,7 +464,7 @@ func validateGoalRequest(ctx context.Context, request GoalRequest) error {
 	return nil
 }
 
-func (r *GoalRunner) begin(ctx context.Context, id string) (context.Context, func(), error) {
+func (r *GoalRunner) begin(ctx context.Context, id string) (context.Context, func() error, error) {
 	if ctx == nil {
 		return nil, nil, errors.New("agentkit: context is required")
 	}
@@ -427,18 +474,34 @@ func (r *GoalRunner) begin(ctx context.Context, id string) (context.Context, fun
 	if !r.runMu.TryLock() {
 		return nil, nil, ErrGoalRunning
 	}
-	runCtx, cancel := context.WithCancel(ctx)
+	var lease *GoalLease
+	if r.leaseStore != nil {
+		var err error
+		lease, err = r.leaseStore.AcquireGoalLease(ctx, id, r.workerID, r.leaseDuration)
+		if err != nil {
+			r.runMu.Unlock()
+			return nil, nil, err
+		}
+	}
+	runCtx, cancelCause := context.WithCancelCause(ctx)
+	cancel := func() { cancelCause(context.Canceled) }
+	heartbeat := r.startLeaseHeartbeat(runCtx, cancelCause, lease)
 	r.activeMu.Lock()
 	r.activeID = id
 	r.cancel = cancel
+	r.lease = cloneGoalLease(lease)
 	r.activeMu.Unlock()
-	finish := func() {
+	finish := func() error {
 		cancel()
+		heartbeatErr := heartbeat.stop()
 		r.activeMu.Lock()
 		r.activeID = ""
 		r.cancel = nil
+		r.lease = nil
 		r.activeMu.Unlock()
+		releaseErr := r.releaseLease(context.WithoutCancel(ctx), lease)
 		r.runMu.Unlock()
+		return errors.Join(heartbeatErr, releaseErr)
 	}
 	return runCtx, finish, nil
 }
@@ -636,6 +699,12 @@ func (r *GoalRunner) loadForAgent(ctx context.Context, id string) (*Goal, error)
 
 func (r *GoalRunner) save(ctx context.Context, goal *Goal) error {
 	goal.UpdatedAt = time.Now().UTC()
+	r.activeMu.Lock()
+	lease := cloneGoalLease(r.lease)
+	r.activeMu.Unlock()
+	if r.leaseStore != nil && lease != nil && lease.GoalID == goal.ID {
+		return r.leaseStore.SaveGoalWithLease(ctx, goal, lease)
+	}
 	return r.store.Save(ctx, goal)
 }
 

@@ -350,9 +350,11 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 
 目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
 
-两个内置目标存储也实现了可选的 `GoalLeaseStore` 接口，在不破坏基础 `GoalStore` 契约的前提下提供带过期时间的所有权、续期、安全释放以及 Token fencing 的保存/删除能力。这是防止旧 worker 在目标被接管后继续提交状态的存储基础。
+两个内置目标存储也实现了可选的 `GoalLeaseStore` 接口。`GoalRunner` 会自动发现它，在每个修改状态的操作前取得所有权，在耗时较长的模型或工具调用期间后台续期，并用不透明 Token fencing 每一次保存。并发 worker 会收到 `ErrGoalLeaseHeld`，可通过 `errors.As` 取得 `GoalLeaseHeldError` 中的持有者和到期时间；已经丢失所有权的 worker 会被取消并收到 `ErrGoalLeaseLost`。worker 崩溃且租约过期后，替代 worker 可直接调用 `Resume`，继续沿用已有的安全恢复规则。
 
-同一个目标 ID 同一时间应只有一个 worker 执行。内置内存和文件存储会保护 goroutine 并拒绝旧版本覆盖，但文件存储定位于本地单进程 worker。分布式部署应实现数据库版 `SessionStore`、`CheckpointStore` 与 `GoalStore`，并在 `Start`/`Resume` 外使用任务系统的租约或抢占机制。`GoalRunner` 不会在宿主进程停止后凭空继续运行；应由 supervisor 拉起 worker 并调用 `Resume`。
+默认租约为一分钟，大约每 20 秒续期一次。可通过 `GoalRunnerConfig` 设置 `WorkerID` 和 `LeaseDuration`；生产环境可设置 `RequireLease: true`，避免旧的自定义存储意外退化为单 worker 模式。基础 `GoalStore` 接口保持兼容。
+
+文件存储依旧定位于本地单进程 worker；其中的租约可以跨重启保留，但不是分布式文件锁。多副本部署应通过数据库事务实现 `SessionStore`、`CheckpointStore`、`GoalStore` 和 `GoalLeaseStore`。`GoalRunner` 不会在宿主进程停止后凭空继续运行；应由 supervisor 在租约可用后拉起 worker 并调用 `Resume`。
 
 ### 自动上下文压缩
 

@@ -23,6 +23,11 @@ func TestMemoryGoalLeaseAcquisitionRenewalAndFencing(t *testing.T) {
 	}
 	if _, err := store.AcquireGoalLease(ctx, "goal", "worker-2", time.Minute); !errors.Is(err, ErrGoalLeaseHeld) {
 		t.Fatalf("expected ErrGoalLeaseHeld, got %v", err)
+	} else {
+		var held *GoalLeaseHeldError
+		if !errors.As(err, &held) || held.Lease.WorkerID != "worker-1" || !held.Lease.ExpiresAt.Equal(first.ExpiresAt) {
+			t.Fatalf("unexpected structured lease error: %#v", held)
+		}
 	}
 	goal := &Goal{
 		ID: "goal", SessionID: "session", Objective: "finish",
