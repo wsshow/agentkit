@@ -290,6 +290,8 @@ result, err := agent.Ask(runCtx, "Summarize this")
 
 Run values format `{user_name}` placeholders when `SystemPrompt` is prepared. Tools and middleware can read them with `agentkit.RunValue[T](ctx, key)`, inspect a copy with `RunValues`, and update a value for later tools or middleware in the same underlying run with `SetRunValue`. `ToolOptions` provides the equivalent request-level escape hatch for custom tools. `WithRunConfig` copies its containers and works with `Ask`, `Send`, `Stream`, `Continue`, and `Resume` without changing those APIs.
 
+AgentKit isolates panics from `ModelRetryConfig` and `ModelFailoverConfig` callbacks. Callbacks that can return an error produce one wrapping `ErrModelPolicyPanic`; advisory callbacks such as backoff calculation and failover decisions fall back safely and emit `EventError` so a long-lived worker is not terminated by application policy code.
+
 ### Session Management
 
 Configure a session ID and store. `New` restores an existing conversation, and every run is saved automatically—even when the model fails or the run is canceled:

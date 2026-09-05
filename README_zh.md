@@ -290,6 +290,8 @@ result, err := agent.Ask(runCtx, "请总结这段内容")
 
 准备 `SystemPrompt` 时，运行值会替换其中的 `{user_name}` 占位符。工具和中间件可通过 `agentkit.RunValue[T](ctx, key)` 读取，通过 `RunValues` 获取副本，并用 `SetRunValue` 更新同一次底层运行中后续工具或中间件可见的值。`ToolOptions` 为自定义工具提供对应的请求级扩展入口。`WithRunConfig` 会复制传入容器，并且无需修改现有 API 即可配合 `Ask`、`Send`、`Stream`、`Continue` 和 `Resume` 使用。
 
+AgentKit 会隔离 `ModelRetryConfig` 和 `ModelFailoverConfig` 用户回调中的 panic。能够返回错误的控制回调会产生包装 `ErrModelPolicyPanic` 的错误；退避计算、是否切换等建议型回调会安全退化并发出 `EventError`，避免应用策略代码直接终止长期运行的 worker。
+
 ### 会话管理
 
 只需配置会话 ID 和存储，`New` 会自动恢复已有对话，每次运行结束（包括模型报错或取消）都会自动保存：

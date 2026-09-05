@@ -202,8 +202,6 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	a := &Agent{
 		name:               cfg.Name,
 		model:              cfg.Model,
-		modelRetry:         cfg.ModelRetryConfig,
-		modelFailover:      cfg.ModelFailoverConfig,
 		state:              newState(),
 		emtr:               newEmitter(),
 		checkPointID:       checkPointID,
@@ -212,6 +210,8 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		followUpMode:       QueueModeOneAtATime,
 		toolCalls:          make(map[string]toolCallInfo),
 	}
+	a.modelRetry = guardedModelRetryConfig(a, cfg.ModelRetryConfig)
+	a.modelFailover = guardedModelFailoverConfig(a, cfg.ModelFailoverConfig)
 	if loadedSession != nil {
 		a.sessionStore = cfg.Session.Store
 		a.sessionID = loadedSession.ID
@@ -306,8 +306,8 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		Model:               cfg.Model,
 		MaxIterations:       maxIter,
 		Handlers:            handlers,
-		ModelRetryConfig:    cfg.ModelRetryConfig,
-		ModelFailoverConfig: cfg.ModelFailoverConfig,
+		ModelRetryConfig:    a.modelRetry,
+		ModelFailoverConfig: a.modelFailover,
 	}
 
 	effectiveToolPolicy := toolPolicyForReduction(cfg.ToolPolicy, cfg.ToolReduction != nil)
