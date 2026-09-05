@@ -189,8 +189,15 @@ func validateGoalContextAndID(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	return validateGoalID(id)
+}
+
+func validateGoalID(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("agentkit: goal ID is required")
+	}
+	if id != strings.TrimSpace(id) {
+		return errors.New("agentkit: goal ID must not have surrounding whitespace")
 	}
 	return nil
 }
@@ -204,6 +211,9 @@ func validateGoal(ctx context.Context, goal *Goal) error {
 	}
 	if strings.TrimSpace(goal.SessionID) == "" {
 		return errors.New("agentkit: goal session ID is required")
+	}
+	if goal.SessionID != strings.TrimSpace(goal.SessionID) {
+		return errors.New("agentkit: goal session ID must not have surrounding whitespace")
 	}
 	if strings.TrimSpace(goal.Objective) == "" {
 		return errors.New("agentkit: goal objective is required")
@@ -275,11 +285,14 @@ func goalInfo(goal *Goal) GoalInfo {
 }
 
 func validateGoalInfo(info GoalInfo) error {
-	if strings.TrimSpace(info.ID) == "" {
-		return errors.New("goal ID is required")
+	if err := validateGoalID(info.ID); err != nil {
+		return err
 	}
 	if strings.TrimSpace(info.SessionID) == "" {
 		return errors.New("goal session ID is required")
+	}
+	if info.SessionID != strings.TrimSpace(info.SessionID) {
+		return errors.New("goal session ID must not have surrounding whitespace")
 	}
 	if strings.TrimSpace(info.Objective) == "" {
 		return errors.New("goal objective is required")

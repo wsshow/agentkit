@@ -133,8 +133,15 @@ func validateToolResultContextAndID(ctx context.Context, id string) error {
 	if err := validateToolResultContext(ctx); err != nil {
 		return err
 	}
+	return validateToolResultID(id)
+}
+
+func validateToolResultID(id string) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("agentkit: tool result ID is required")
+	}
+	if id != strings.TrimSpace(id) {
+		return errors.New("agentkit: tool result ID must not have surrounding whitespace")
 	}
 	return nil
 }
@@ -143,7 +150,13 @@ func validateStoredToolResult(ctx context.Context, result *StoredToolResult) err
 	if result == nil {
 		return errors.New("agentkit: tool result is required")
 	}
-	return validateToolResultContextAndID(ctx, result.ID)
+	if err := validateToolResultContextAndID(ctx, result.ID); err != nil {
+		return err
+	}
+	if result.SessionID != strings.TrimSpace(result.SessionID) {
+		return errors.New("agentkit: tool result session ID must not have surrounding whitespace")
+	}
+	return nil
 }
 
 func normalizedStoredToolResult(result *StoredToolResult) *StoredToolResult {
@@ -169,8 +182,11 @@ func storedToolResultInfo(result *StoredToolResult) ToolResultInfo {
 }
 
 func validateToolResultInfo(info ToolResultInfo) error {
-	if strings.TrimSpace(info.ID) == "" {
-		return errors.New("tool result ID is required")
+	if err := validateToolResultID(info.ID); err != nil {
+		return err
+	}
+	if info.SessionID != strings.TrimSpace(info.SessionID) {
+		return errors.New("tool result session ID must not have surrounding whitespace")
 	}
 	if info.Size < 0 {
 		return errors.New("tool result size must not be negative")

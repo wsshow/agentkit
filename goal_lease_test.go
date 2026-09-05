@@ -127,6 +127,9 @@ func TestMemoryGoalLeaseAllowsOnlyOneConcurrentOwner(t *testing.T) {
 func TestGoalLeaseValidation(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryGoalStore()
+	if _, err := store.AcquireGoalLease(ctx, " goal ", "worker", time.Minute); err == nil {
+		t.Fatal("expected goal ID validation error")
+	}
 	if _, err := store.AcquireGoalLease(ctx, "goal", " ", time.Minute); err == nil {
 		t.Fatal("expected worker validation error")
 	}

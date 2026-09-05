@@ -106,6 +106,37 @@ func TestGoalStoreValidation(t *testing.T) {
 	}
 }
 
+func TestGoalStoresRejectAmbiguousDurableIDs(t *testing.T) {
+	ctx := context.Background()
+	fileStore, err := NewFileGoalStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create file goal store: %v", err)
+	}
+	stores := map[string]GoalStore{
+		"memory": NewMemoryGoalStore(),
+		"file":   fileStore,
+	}
+	for name, store := range stores {
+		t.Run(name, func(t *testing.T) {
+			if err := store.Save(ctx, &Goal{
+				ID: " goal ", SessionID: "session", Objective: "finish",
+				Status: GoalStatusActive, MaxIterations: 1,
+			}); err == nil {
+				t.Fatal("expected surrounding goal ID whitespace to be rejected")
+			}
+			if err := store.Save(ctx, &Goal{
+				ID: "goal", SessionID: " session ", Objective: "finish",
+				Status: GoalStatusActive, MaxIterations: 1,
+			}); err == nil {
+				t.Fatal("expected surrounding session ID whitespace to be rejected")
+			}
+			if _, err := store.Load(ctx, " goal "); err == nil {
+				t.Fatal("expected surrounding goal ID whitespace to be rejected on load")
+			}
+		})
+	}
+}
+
 func TestMemoryGoalStoreRejectsStaleRevision(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryGoalStore()

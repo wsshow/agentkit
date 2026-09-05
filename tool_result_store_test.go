@@ -91,3 +91,30 @@ func TestToolResultStoreValidation(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestToolResultStoresRejectAmbiguousDurableIDs(t *testing.T) {
+	ctx := context.Background()
+	fileStore, err := NewFileToolResultStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create file tool result store: %v", err)
+	}
+	stores := map[string]ToolResultStore{
+		"memory": NewMemoryToolResultStore(),
+		"file":   fileStore,
+	}
+	for name, store := range stores {
+		t.Run(name, func(t *testing.T) {
+			if err := store.Save(ctx, &StoredToolResult{ID: " result ", Content: "output"}); err == nil {
+				t.Fatal("expected surrounding result ID whitespace to be rejected")
+			}
+			if err := store.Save(ctx, &StoredToolResult{
+				ID: "result", SessionID: " session ", Content: "output",
+			}); err == nil {
+				t.Fatal("expected surrounding session ID whitespace to be rejected")
+			}
+			if _, err := store.Load(ctx, " result "); err == nil {
+				t.Fatal("expected surrounding result ID whitespace to be rejected on load")
+			}
+		})
+	}
+}
