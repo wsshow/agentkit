@@ -259,7 +259,7 @@ func TestToolResultReaderUsesUnicodeOffsetsAndBounds(t *testing.T) {
 	if err := store.Save(ctx, &StoredToolResult{ID: "unicode", Content: "甲乙丙丁戊"}); err != nil {
 		t.Fatalf("save result: %v", err)
 	}
-	reader, err := newToolResultReader(store)
+	reader, err := newToolResultReader(store, "")
 	if err != nil {
 		t.Fatalf("create reader: %v", err)
 	}
@@ -286,6 +286,45 @@ func TestToolResultReaderUsesUnicodeOffsetsAndBounds(t *testing.T) {
 	}
 	if _, err := invokable.InvokableRun(ctx, `{"id":"unicode","limit":-1}`); err == nil {
 		t.Fatal("expected negative limit error")
+	}
+}
+
+func TestToolResultReaderEnforcesSessionOwnership(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryToolResultStore()
+	for _, result := range []*StoredToolResult{
+		{ID: "owned", SessionID: "session-a", Content: "owned content"},
+		{ID: "other", SessionID: "session-b", Content: "other content"},
+		{ID: "detached", Content: "detached content"},
+	} {
+		if err := store.Save(ctx, result); err != nil {
+			t.Fatalf("Save(%q) error = %v", result.ID, err)
+		}
+	}
+	reader, err := newToolResultReader(store, "session-a")
+	if err != nil {
+		t.Fatalf("newToolResultReader() error = %v", err)
+	}
+	invokable, ok := reader.(einotool.InvokableTool)
+	if !ok {
+		t.Fatal("reader is not invokable")
+	}
+	if output, err := invokable.InvokableRun(ctx, `{"id":"owned"}`); err != nil || !strings.HasPrefix(output, "owned content") {
+		t.Fatalf("read owned result = %q, %v", output, err)
+	}
+	for _, id := range []string{"other", "detached"} {
+		if _, err := invokable.InvokableRun(ctx, fmt.Sprintf(`{"id":%q}`, id)); !errors.Is(err, ErrToolResultAccessDenied) {
+			t.Fatalf("read %q error = %v, want ErrToolResultAccessDenied", id, err)
+		}
+	}
+
+	detachedReader, err := newToolResultReader(store, "")
+	if err != nil {
+		t.Fatalf("newToolResultReader(detached) error = %v", err)
+	}
+	detachedInvokable := detachedReader.(einotool.InvokableTool)
+	if _, err := detachedInvokable.InvokableRun(ctx, `{"id":"owned"}`); !errors.Is(err, ErrToolResultAccessDenied) {
+		t.Fatalf("detached reader accessed session result: %v", err)
 	}
 }
 

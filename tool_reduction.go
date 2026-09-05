@@ -97,7 +97,11 @@ func newToolReduction(
 		store = NewMemoryToolResultStore()
 	}
 
-	reader, err := newToolResultReader(store)
+	sessionID := ""
+	if session != nil {
+		sessionID = session.ID
+	}
+	reader, err := newToolResultReader(store, sessionID)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("agentkit: configure tool result reader: %w", err)
 	}
@@ -119,10 +123,6 @@ func newToolReduction(
 		}
 		return uuid.NewString(), nil
 	}
-	sessionID := ""
-	if session != nil {
-		sessionID = session.ID
-	}
 	middleware, err := reduction.New(ctx, &reduction.Config{
 		Backend:                   &toolResultBackend{store: store, sessionID: sessionID},
 		ReadFileToolName:          ToolResultReadToolName,
@@ -143,7 +143,7 @@ func newToolReduction(
 	return middleware, reader, store, nil
 }
 
-func newToolResultReader(store ToolResultStore) (Tool, error) {
+func newToolResultReader(store ToolResultStore, sessionID string) (Tool, error) {
 	return utils.InferTool(
 		ToolResultReadToolName,
 		"Read a bounded chunk of a complete tool result previously moved out of context. Use the opaque ID from the reduction notice and continue with next_offset when present.",
@@ -163,6 +163,9 @@ func newToolResultReader(store ToolResultStore) (Tool, error) {
 			result, err := toolResultStoreLoad(ctx, store, input.ID)
 			if err != nil {
 				return "", err
+			}
+			if result.SessionID != sessionID {
+				return "", fmt.Errorf("%w: %s", ErrToolResultAccessDenied, input.ID)
 			}
 			content := []rune(result.Content)
 			if input.Offset > len(content) {

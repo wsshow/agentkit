@@ -15,6 +15,8 @@ var (
 	ErrToolResultNotFound = errors.New("agentkit: tool result not found")
 	// ErrToolResultExists 表示相同 ID 的不可变工具结果已经存在。
 	ErrToolResultExists = errors.New("agentkit: tool result already exists")
+	// ErrToolResultAccessDenied 表示结果不属于当前 Agent 会话。
+	ErrToolResultAccessDenied = errors.New("agentkit: tool result access denied")
 )
 
 // StoredToolResult 是从模型上下文卸载的完整文本工具结果。
