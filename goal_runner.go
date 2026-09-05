@@ -299,9 +299,10 @@ func (r *GoalRunner) beginStart(ctx context.Context, request GoalRequest) (runCt
 		return nil, nil, nil, err
 	}
 	prepared := false
+	release := finish
 	defer func() {
 		if !prepared {
-			retErr = errors.Join(retErr, finish())
+			retErr = errors.Join(retErr, release())
 		}
 	}()
 	if _, err := r.store.Load(runCtx, request.ID); err == nil {

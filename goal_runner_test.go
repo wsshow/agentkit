@@ -201,6 +201,40 @@ func TestGoalRunnerReportsRunAndErrorPersistenceFailures(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerStartPreparationErrorReleasesRunner(t *testing.T) {
+	ctx := context.Background()
+	persistErr := errors.New("goal database unavailable")
+	store := &failNthGoalSaveStore{
+		inner:  NewMemoryGoalStore(),
+		failAt: 1,
+		err:    persistErr,
+	}
+	agent, err := New(ctx, &Config{
+		Model:   NewMockChatModel(MockModelText("finished")),
+		Session: &SessionConfig{ID: "prepare-error", Store: NewMemorySessionStore()},
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	runner, err := NewGoalRunner(agent, &GoalRunnerConfig{
+		Store: store,
+		Evaluator: GoalEvaluatorFunc(func(context.Context, GoalEvaluation) (GoalDecision, error) {
+			return GoalDecision{Complete: true, Reason: "verified"}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("create runner: %v", err)
+	}
+	if _, err := runner.Start(ctx, GoalRequest{ID: "failed", Objective: "work"}); !errors.Is(err, persistErr) {
+		t.Fatalf("first Start() error = %v, want persistence error", err)
+	}
+	result, err := runner.Start(ctx, GoalRequest{ID: "recovered", Objective: "work"})
+	if err != nil || result.Goal.Status != GoalStatusCompleted {
+		t.Fatalf("second Start() = %#v, %v, want released runner", result, err)
+	}
+}
+
 func TestGoalRunnerGeneratesIDAndResumesOnlyPendingGoal(t *testing.T) {
 	ctx := context.Background()
 	sessions := NewMemorySessionStore()
