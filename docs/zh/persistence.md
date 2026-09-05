@@ -74,6 +74,8 @@ err := agent.SaveSession(ctx)
 
 自定义持久化方法必须遵循传入的非空 context，并在其取消后及时返回。请求取消后的内部收尾默认使用 `DefaultPersistenceTimeout`（30 秒），可通过 `Config.PersistenceTimeout` 修改；只有后端确实需要更久时才应增大。
 
+每次成功的 `Load` 都必须返回非 nil 对象，且其 ID 必须与请求 ID 完全一致。目标快照还必须包含合法状态、会话 ID、目标内容和正数迭代上限。AgentKit 会在边界统一校验；后端返回畸形数据时返回 `ErrInvalidPersistenceData`，而不是冒险 panic 或恢复到其他记录。载入的可变数据在使用前会复制，因此后端可以安全保留自己的缓存对象。
+
 ## 并发写入
 
 内置存储通过 `Session.Revision` 实现乐观并发控制。如果两个 Agent 恢复了同一 revision，落后的写入方会收到 `ErrSessionConflict`，不会静默覆盖更新的历史。

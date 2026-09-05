@@ -74,6 +74,8 @@ For a database, implement `SessionStore`. A custom store may also implement:
 
 Custom persistence methods must honor their non-nil context and return promptly after it is canceled. `Config.PersistenceTimeout` defaults to `DefaultPersistenceTimeout` (30 seconds) for internal cleanup after cancellation. Increase it only when the backend legitimately needs more time.
 
+Every successful `Load` must return a non-nil object whose ID exactly matches the requested ID. Goal snapshots must also contain a valid status, session ID, objective, and positive iteration limit. AgentKit validates these boundaries and returns `ErrInvalidPersistenceData` for malformed backend output instead of risking a panic or cross-record restore. Loaded mutable data is copied before AgentKit uses it, so a backend may safely retain its own cache object.
+
 ## Concurrent Writers
 
 Built-in stores use `Session.Revision` for optimistic concurrency. If two Agents restore the same revision, the stale writer receives `ErrSessionConflict` instead of silently overwriting newer history.
