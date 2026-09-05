@@ -188,6 +188,8 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 defer agent.Close()
 ```
 
+Custom `Handlers` are automatically guarded: hook, wrapper endpoint, and returned-stream panics become errors wrapping `ErrMiddlewarePanic` instead of terminating the process.
+
 For manual history restoration, use `History: savedHistory` instead of `Session`; the two options are mutually exclusive.
 
 ### Core Methods

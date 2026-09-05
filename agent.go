@@ -235,7 +235,9 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 	}
 
 	handlers := make([]ChatModelAgentMiddleware, 0, len(cfg.Handlers)+6)
-	handlers = append(handlers, cfg.Handlers...)
+	for _, handler := range cfg.Handlers {
+		handlers = append(handlers, guardAgentMiddleware(handler))
+	}
 	if cfg.ToolSearch != nil {
 		middleware, err := newToolSearchMiddleware(ctx, cfg.ToolSearch)
 		if err != nil {
@@ -373,6 +375,11 @@ func validateConfig(ctx context.Context, cfg *Config) error {
 		}
 		if cfg.History != nil {
 			return errors.New("agentkit: history and session cannot be configured together")
+		}
+	}
+	for index, handler := range cfg.Handlers {
+		if handler == nil {
+			return fmt.Errorf("agentkit: middleware %d is nil", index)
 		}
 	}
 	if err := validateCompactionConfig(cfg.Compaction); err != nil {

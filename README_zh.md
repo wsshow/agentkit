@@ -188,6 +188,8 @@ agent, err := agentkit.New(ctx, &agentkit.Config{
 defer agent.Close()
 ```
 
+自定义 `Handlers` 会自动受到保护：hook、包装后的端点和返回流发生 panic 时，会转换为包装 `ErrMiddlewarePanic` 的错误，不会终止进程。
+
 如需手动恢复历史，可使用 `History: savedHistory`；它与 `Session` 二选一。
 
 ### 核心方法
