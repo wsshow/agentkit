@@ -167,6 +167,84 @@ func TestGoalRunnerResumesPendingEvaluationAcrossAgentInstances(t *testing.T) {
 	}
 }
 
+func TestGoalRunnerResumesPendingEvaluationAcrossFileStoreRestart(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	firstSessions, err := NewFileSessionStore(dir)
+	if err != nil {
+		t.Fatalf("create first file session store: %v", err)
+	}
+	firstModel := NewMockChatModel(
+		MockModelText("all checks passed"),
+		MockModelError(errors.New("evaluator unavailable")),
+	)
+	firstAgent, err := New(ctx, &Config{
+		Name: "worker", Model: firstModel,
+		Session: &SessionConfig{ID: "file-restart-session", Store: firstSessions},
+	})
+	if err != nil {
+		t.Fatalf("create first agent: %v", err)
+	}
+	firstRunner, err := NewGoalRunner(firstAgent, nil)
+	if err != nil {
+		_ = firstAgent.Close()
+		t.Fatalf("create first goal runner: %v", err)
+	}
+	result, err := firstRunner.Start(ctx, GoalRequest{ID: "file-restart", Objective: "finish checks"})
+	if err == nil {
+		_ = firstAgent.Close()
+		t.Fatal("expected evaluator error")
+	}
+	if result == nil || result.Goal == nil || !result.Goal.PendingEvaluation {
+		_ = firstAgent.Close()
+		t.Fatalf("expected persisted pending evaluation: %#v", result)
+	}
+	if err := firstAgent.Close(); err != nil {
+		t.Fatalf("close first agent: %v", err)
+	}
+
+	secondSessions, err := NewFileSessionStore(dir)
+	if err != nil {
+		t.Fatalf("reopen file session store: %v", err)
+	}
+	secondModel := NewMockChatModel(
+		MockModelText(`{"complete":true,"reason":"all checks passed","next_prompt":""}`),
+	)
+	secondAgent, err := New(ctx, &Config{
+		Name: "worker", Model: secondModel,
+		Session: &SessionConfig{ID: "file-restart-session", Store: secondSessions},
+	})
+	if err != nil {
+		t.Fatalf("create restored agent: %v", err)
+	}
+	t.Cleanup(func() { _ = secondAgent.Close() })
+	secondRunner, err := NewGoalRunner(secondAgent, nil)
+	if err != nil {
+		t.Fatalf("create restored goal runner: %v", err)
+	}
+	run, err := secondRunner.ResumePendingAsync(ctx)
+	if err != nil {
+		t.Fatalf("resume pending goal asynchronously: %v", err)
+	}
+	result, err = run.Wait()
+	if err != nil {
+		t.Fatalf("wait for restored goal: %v", err)
+	}
+	if result.Goal.Status != GoalStatusCompleted || result.Goal.Iteration != 1 {
+		t.Fatalf("unexpected restored goal: %#v", result.Goal)
+	}
+	if calls := secondModel.Calls(); len(calls) != 1 {
+		t.Fatalf("restored model calls = %d, want only pending evaluation", len(calls))
+	}
+	persisted, err := secondSessions.GoalStore().Load(ctx, "file-restart")
+	if err != nil {
+		t.Fatalf("load restored goal: %v", err)
+	}
+	if persisted.Status != GoalStatusCompleted || persisted.PendingEvaluation {
+		t.Fatalf("persisted restored goal = %#v", persisted)
+	}
+}
+
 func TestGoalRunnerReportsRunAndErrorPersistenceFailures(t *testing.T) {
 	ctx := context.Background()
 	runErr := errors.New("model unavailable")
