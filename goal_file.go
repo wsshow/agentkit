@@ -23,7 +23,7 @@ type storedGoal struct {
 // 它适合本地应用和单进程服务；多进程写入请实现数据库型 GoalStore。
 type FileGoalStore struct {
 	dir string
-	mu  sync.RWMutex
+	mu  *sync.RWMutex
 	now func() time.Time
 }
 
@@ -41,7 +41,11 @@ func NewFileGoalStore(dir string) (*FileGoalStore, error) {
 	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agentkit: create goal directory: %w", err)
 	}
-	return &FileGoalStore{dir: cleanDir}, nil
+	mu, err := fileStoreDirectoryLock(cleanDir)
+	if err != nil {
+		return nil, fmt.Errorf("agentkit: resolve goal directory: %w", err)
+	}
+	return &FileGoalStore{dir: cleanDir, mu: mu}, nil
 }
 
 // Load 从文件加载目标快照。

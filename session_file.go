@@ -22,7 +22,7 @@ type storedSession struct {
 // 它适合本地应用和单进程服务；多进程写入请实现数据库型 SessionStore。
 type FileSessionStore struct {
 	dir         string
-	mu          sync.RWMutex
+	mu          *sync.RWMutex
 	checkpoints *FileCheckpointStore
 	goals       *FileGoalStore
 	toolResults *FileToolResultStore
@@ -44,6 +44,10 @@ func NewFileSessionStore(dir string) (*FileSessionStore, error) {
 	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agentkit: create session directory: %w", err)
 	}
+	mu, err := fileStoreDirectoryLock(cleanDir)
+	if err != nil {
+		return nil, fmt.Errorf("agentkit: resolve session directory: %w", err)
+	}
 	checkpoints, err := NewFileCheckpointStore(filepath.Join(cleanDir, ".checkpoints"))
 	if err != nil {
 		return nil, err
@@ -57,7 +61,7 @@ func NewFileSessionStore(dir string) (*FileSessionStore, error) {
 		return nil, err
 	}
 	return &FileSessionStore{
-		dir: cleanDir, checkpoints: checkpoints, goals: goals, toolResults: toolResults,
+		dir: cleanDir, mu: mu, checkpoints: checkpoints, goals: goals, toolResults: toolResults,
 	}, nil
 }
 

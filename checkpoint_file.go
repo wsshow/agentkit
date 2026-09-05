@@ -14,7 +14,7 @@ import (
 // 它适合本地应用和单进程服务；多进程写入请实现数据库型 CheckpointStore。
 type FileCheckpointStore struct {
 	dir string
-	mu  sync.RWMutex
+	mu  *sync.RWMutex
 }
 
 var (
@@ -31,7 +31,11 @@ func NewFileCheckpointStore(dir string) (*FileCheckpointStore, error) {
 	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agentkit: create checkpoint directory: %w", err)
 	}
-	return &FileCheckpointStore{dir: cleanDir}, nil
+	mu, err := fileStoreDirectoryLock(cleanDir)
+	if err != nil {
+		return nil, fmt.Errorf("agentkit: resolve checkpoint directory: %w", err)
+	}
+	return &FileCheckpointStore{dir: cleanDir, mu: mu}, nil
 }
 
 // Set 通过原子文件替换保存检查点。

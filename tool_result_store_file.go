@@ -22,7 +22,7 @@ type storedToolResultFile struct {
 // 它适合本地应用和单进程服务；多进程写入请实现数据库型 ToolResultStore。
 type FileToolResultStore struct {
 	dir string
-	mu  sync.RWMutex
+	mu  *sync.RWMutex
 }
 
 var _ ToolResultStore = (*FileToolResultStore)(nil)
@@ -36,7 +36,11 @@ func NewFileToolResultStore(dir string) (*FileToolResultStore, error) {
 	if err := os.MkdirAll(cleanDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agentkit: create tool result directory: %w", err)
 	}
-	return &FileToolResultStore{dir: cleanDir}, nil
+	mu, err := fileStoreDirectoryLock(cleanDir)
+	if err != nil {
+		return nil, fmt.Errorf("agentkit: resolve tool result directory: %w", err)
+	}
+	return &FileToolResultStore{dir: cleanDir, mu: mu}, nil
 }
 
 // Load 从文件加载完整工具结果。
