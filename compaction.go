@@ -40,6 +40,25 @@ type resilientCompactionModel struct {
 	failover *ModelFailoverConfig
 }
 
+type turnPreservingCompactionMiddleware struct {
+	ChatModelAgentMiddleware
+	keepRecentTurns int
+}
+
+func (m *turnPreservingCompactionMiddleware) BeforeModelRewriteState(
+	ctx context.Context,
+	state *adk.ChatModelAgentState,
+	modelContext *adk.ModelContext,
+) (context.Context, *adk.ChatModelAgentState, error) {
+	if state != nil {
+		older, _ := splitCompactionHistory(state.Messages, m.keepRecentTurns)
+		if len(withoutLeadingSystemMessages(older)) == 0 {
+			return ctx, state, nil
+		}
+	}
+	return m.ChatModelAgentMiddleware.BeforeModelRewriteState(ctx, state, modelContext)
+}
+
 func (m *resilientCompactionModel) Generate(ctx context.Context, input []*schema.Message, options ...ModelOption) (*schema.Message, error) {
 	return generateModelWithFailover(ctx, m.model, input, m.retry, m.failover, options...)
 }
@@ -125,28 +144,33 @@ func newCompactionMiddleware(ctx context.Context, agent *Agent, primaryModel Cha
 	if err != nil {
 		return nil, fmt.Errorf("agentkit: configure compaction: %w", err)
 	}
-	return middleware, nil
+	return &turnPreservingCompactionMiddleware{
+		ChatModelAgentMiddleware: middleware,
+		keepRecentTurns:          keepRecentTurns,
+	}, nil
 }
 
 func splitCompactionHistory(messages []*schema.Message, keepRecentTurns int) (older, recent []*schema.Message) {
 	cut := len(messages)
 	turns := 0
+	found := false
 	for i := len(messages) - 1; i >= 0; i-- {
 		message := messages[i]
 		if message != nil && message.Role == schema.User {
 			turns++
 			if turns == keepRecentTurns {
 				cut = i
+				found = true
 				break
 			}
 		}
 	}
 
 	systemCount := len(messages) - len(withoutLeadingSystemMessages(messages))
-	if cut <= systemCount {
-		// There is no older conversation to summarize. Falling back to the
-		// complete context is safer than asking the model to summarize nothing.
-		return messages, nil
+	if !found || cut <= systemCount {
+		// There is no older conversation to summarize. Keep every requested
+		// recent turn verbatim and let the main model handle the original input.
+		return nil, messages
 	}
 	return messages[:cut], messages[cut:]
 }

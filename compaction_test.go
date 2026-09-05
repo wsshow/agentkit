@@ -174,6 +174,64 @@ func TestAgentCompactionMessageThresholdDoesNotTriggerEarly(t *testing.T) {
 	}
 }
 
+func TestAgentCompactionPreservesOnlyAvailableRecentTurn(t *testing.T) {
+	ctx := context.Background()
+	summaryModel := NewMockChatModel(MockModelText("must not be used"))
+	primaryModel := NewMockChatModel(MockExpect(MockModelText("answer"), func(call MockModelCall) error {
+		contents := nonSystemContents(call.Input)
+		if !slices.Contains(contents, "the only user turn must stay exact") {
+			return fmt.Errorf("primary input lost the only user turn: %v", contents)
+		}
+		if containsSubstring(contents, "must not be used") {
+			return fmt.Errorf("primary input contains an unexpected summary: %v", contents)
+		}
+		return nil
+	}))
+	agent, err := New(ctx, &Config{
+		Name:         "assistant",
+		SystemPrompt: "be precise",
+		Model:        primaryModel,
+		Compaction: &CompactionConfig{
+			Model:           summaryModel,
+			MaxTokens:       1,
+			KeepRecentTurns: 3,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+	events := newMockEventRecorder()
+	agent.Subscribe(events.Record)
+
+	if err := agent.Prompt(ctx, "the only user turn must stay exact"); err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+	if calls := summaryModel.Calls(); len(calls) != 0 {
+		t.Fatalf("summary model calls = %d, want 0", len(calls))
+	}
+	if got := events.Count(EventCompactionStart); got != 0 {
+		t.Fatalf("compaction start count = %d, want 0", got)
+	}
+	contextHistory := agent.ContextHistory()
+	if len(contextHistory) != 2 || contextHistory[0].Content != "the only user turn must stay exact" {
+		t.Fatalf("ContextHistory() = %#v, want exact user turn and answer", contextHistory)
+	}
+}
+
+func TestSplitCompactionHistoryKeepsAllWhenTurnsAreInsufficient(t *testing.T) {
+	messages := []*schema.Message{
+		schema.SystemMessage("system"),
+		schema.UserMessage("first"),
+		schema.AssistantMessage("answer", nil),
+		schema.UserMessage("second"),
+	}
+	older, recent := splitCompactionHistory(messages, 3)
+	if len(older) != 0 || len(recent) != len(messages) {
+		t.Fatalf("split = older %d, recent %d; want 0, %d", len(older), len(recent), len(messages))
+	}
+}
+
 func TestAgentCompactionFailureKeepsOriginalContext(t *testing.T) {
 	ctx := context.Background()
 	summaryErr := errors.New("summary unavailable")
