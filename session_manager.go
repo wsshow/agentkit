@@ -383,6 +383,9 @@ func (m *SessionManager) forkSourceLocked(ctx context.Context, id string) (*Sess
 		if err := m.authorize(session); err != nil {
 			return nil, err
 		}
+		if err := validateForkSource(session); err != nil {
+			return nil, err
+		}
 		return session, nil
 	}
 	session, err := agent.sessionWhenIdle(ctx)
@@ -392,7 +395,18 @@ func (m *SessionManager) forkSourceLocked(ctx context.Context, id string) (*Sess
 	if err := m.authorize(session); err != nil {
 		return nil, err
 	}
+	if err := validateForkSource(session); err != nil {
+		return nil, err
+	}
 	return session, nil
+}
+
+func validateForkSource(session *Session) error {
+	if session != nil && len(session.PendingInterrupts) > 0 {
+		return fmt.Errorf("%w: session %q must be resumed or cleared before it can be forked",
+			ErrResumeRequired, session.ID)
+	}
+	return nil
 }
 
 // CloseSession 关闭并移除一个活动 Agent，但保留持久化会话。重复调用是安全的。

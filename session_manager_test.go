@@ -487,6 +487,43 @@ func TestSessionManagerForkCopiesConversationWithoutOperationalState(t *testing.
 	}
 }
 
+func TestSessionManagerRejectsForkFromPendingInterrupt(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	manager, err := NewSessionManager(&SessionManagerConfig{
+		Store: store,
+		AgentConfig: &Config{
+			Name:  "assistant",
+			Model: NewMockChatModel(MockModelToolCallWithID("approval-call", "approve_action", `{"action":"release"}`)),
+			Tools: []Tool{newCheckpointApprovalTool(t)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	source, err := manager.CreateWithOptions(ctx, CreateSessionOptions{ID: "source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Prompt(ctx, "release"); err != nil {
+		t.Fatal(err)
+	}
+	if len(source.PendingInterrupts()) != 1 {
+		t.Fatal("source did not retain its pending interrupt")
+	}
+	if _, err := manager.Fork(ctx, "source", CreateSessionOptions{ID: "invalid-branch"}); !errors.Is(err, ErrResumeRequired) {
+		t.Fatalf("Fork() error = %v, want ErrResumeRequired", err)
+	}
+	if _, err := store.Load(ctx, "invalid-branch"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("rejected Fork() created a target: %v", err)
+	}
+	if len(source.PendingInterrupts()) != 1 {
+		t.Fatal("rejected Fork() changed the source interrupt")
+	}
+}
+
 func TestSessionManagerSnapshotOperationsWaitForSourceRunToSettle(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()
