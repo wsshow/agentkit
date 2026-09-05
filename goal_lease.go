@@ -154,6 +154,7 @@ func (s *MemoryGoalStore) DeleteGoalWithLease(ctx context.Context, goalID string
 		return err
 	}
 	delete(s.goals, goalID)
+	delete(s.leases, goalID)
 	return nil
 }
 

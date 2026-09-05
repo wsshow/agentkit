@@ -123,10 +123,18 @@ func (s *FileGoalStore) Delete(ctx context.Context, id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.deleteLocked(id)
+}
+
+func (s *FileGoalStore) deleteLocked(id string) error {
+	var goalErr, leaseErr error
 	if err := os.Remove(s.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("agentkit: delete goal %q: %w", id, err)
+		goalErr = fmt.Errorf("agentkit: delete goal %q: %w", id, err)
 	}
-	return nil
+	if err := os.Remove(s.leasePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		leaseErr = fmt.Errorf("agentkit: delete goal lease %q: %w", id, err)
+	}
+	return errors.Join(goalErr, leaseErr)
 }
 
 // List 按更新时间从新到旧列出目标。

@@ -94,3 +94,21 @@ func TestFileGoalListIgnoresLeaseFiles(t *testing.T) {
 		t.Fatalf("release lease: %v", err)
 	}
 }
+
+func TestFileGoalDeleteRemovesLeaseFile(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewFileGoalStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create goal store: %v", err)
+	}
+	lease, err := store.AcquireGoalLease(ctx, "obsolete", "worker", time.Minute)
+	if err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+	if err := store.Delete(ctx, lease.GoalID); err != nil {
+		t.Fatalf("delete goal: %v", err)
+	}
+	if _, err := os.Stat(store.leasePath(lease.GoalID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lease file still exists: %v", err)
+	}
+}

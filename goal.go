@@ -150,6 +150,7 @@ func (s *MemoryGoalStore) Delete(ctx context.Context, id string) error {
 	}
 	s.mu.Lock()
 	delete(s.goals, id)
+	delete(s.leases, id)
 	s.mu.Unlock()
 	return nil
 }

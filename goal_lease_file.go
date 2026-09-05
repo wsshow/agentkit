@@ -121,10 +121,7 @@ func (s *FileGoalStore) DeleteGoalWithLease(ctx context.Context, goalID string, 
 	if _, err := s.validLeaseLocked(lease); err != nil {
 		return err
 	}
-	if err := os.Remove(s.path(goalID)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("agentkit: delete goal %q: %w", goalID, err)
-	}
-	return nil
+	return s.deleteLocked(goalID)
 }
 
 func (s *FileGoalStore) validLeaseLocked(lease *GoalLease) (*GoalLease, error) {

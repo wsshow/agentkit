@@ -142,3 +142,18 @@ func TestGoalLeaseValidation(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestMemoryGoalDeleteRemovesLease(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryGoalStore()
+	lease, err := store.AcquireGoalLease(ctx, "obsolete", "worker-1", time.Minute)
+	if err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+	if err := store.Delete(ctx, lease.GoalID); err != nil {
+		t.Fatalf("delete goal: %v", err)
+	}
+	if _, err := store.AcquireGoalLease(ctx, lease.GoalID, "worker-2", time.Minute); err != nil {
+		t.Fatalf("acquire lease after delete: %v", err)
+	}
+}
