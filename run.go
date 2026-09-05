@@ -69,9 +69,8 @@ func (a *Agent) executeLoop(parentCtx context.Context) error {
 	a.mu.Unlock()
 
 	cancelOpt, cancelAgent := adk.WithCancel()
-	iter := a.runner.Run(
-		parentCtx,
-		history,
+	runOptions := agentRunOptions(parentCtx)
+	runOptions = append(runOptions,
 		cancelOpt,
 		adk.WithCheckPointID(a.checkPointID),
 		adk.WithAfterToolCallsHook(func(ctx context.Context) error {
@@ -84,6 +83,11 @@ func (a *Agent) executeLoop(parentCtx context.Context) error {
 			return nil
 		}),
 	)
+	iter := a.runner.Run(
+		parentCtx,
+		history,
+		runOptions...,
+	)
 	return a.consumeIter(parentCtx, iter)
 }
 
@@ -94,9 +98,8 @@ func (a *Agent) executeResume(parentCtx context.Context, targets map[string]any)
 	a.mu.Unlock()
 
 	cancelOpt, cancelAgent := adk.WithCancel()
-	iter, err := a.runner.ResumeWithParams(parentCtx, a.checkPointID, &adk.ResumeParams{
-		Targets: targets,
-	},
+	runOptions := agentRunOptions(parentCtx)
+	runOptions = append(runOptions,
 		cancelOpt,
 		adk.WithAfterToolCallsHook(func(ctx context.Context) error {
 			// A recreated Agent has no in-memory batch barrier from the interrupted
@@ -111,6 +114,11 @@ func (a *Agent) executeResume(parentCtx context.Context, targets map[string]any)
 			}
 			return nil
 		}),
+	)
+	iter, err := a.runner.ResumeWithParams(parentCtx, a.checkPointID, &adk.ResumeParams{
+		Targets: targets,
+	},
+		runOptions...,
 	)
 	if err != nil {
 		return err

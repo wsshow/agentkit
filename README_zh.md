@@ -12,6 +12,7 @@
 
 - **事件流架构** — 订阅细粒度事件（消息增量、工具调用、错误等）
 - **简单运行结果** — 通过 `Ask` 直接获得最终回复、累计用量、工具调用和中断信息，无需先编写订阅器
+- **请求级配置** — 按单次请求覆盖模型/工具选项并注入类型安全的运行值，不修改 Agent 全局配置
 - **转向与后续消息队列** — 在执行过程中注入消息以重定向 Agent 或追加后续任务
 - **人机协作（HITL）** — 中断 Agent 执行并在用户提供数据后恢复
 - **流式输出** — 通过 Eino ADK 流式传输实时逐 token 输出
@@ -249,6 +250,26 @@ agent.Close()
 ```
 
 > `Prompt`、`Send`、`Continue`、`Resume` 互斥执行。可通过 `errors.Is(err, agentkit.ErrAgentRunning)` 判断并发执行错误。发生 HITL 中断后应先调用 `Resume`；在检查点被恢复或清理前，新执行会返回 `agentkit.ErrResumeRequired`，避免未完成的工具操作被悄悄丢弃。
+
+### 请求级配置
+
+可通过 `context` 定制单次请求，同时保持共享 Agent 的配置稳定：
+
+```go
+runCtx := agentkit.WithRunConfig(ctx, agentkit.RunConfig{
+    ModelOptions: []agentkit.ModelOption{
+        model.WithTemperature(0.2),
+        model.WithMaxTokens(2_000),
+    },
+    Values: map[string]any{
+        "user_name": "Alice",
+        "request_id": "req-42",
+    },
+})
+result, err := agent.Ask(runCtx, "请总结这段内容")
+```
+
+准备 `SystemPrompt` 时，运行值会替换其中的 `{user_name}` 占位符。工具和中间件可通过 `agentkit.RunValue[T](ctx, key)` 读取，通过 `RunValues` 获取副本，并用 `SetRunValue` 更新同一次底层运行中后续工具或中间件可见的值。`ToolOptions` 为自定义工具提供对应的请求级扩展入口。`WithRunConfig` 会复制传入容器，并且无需修改现有 API 即可配合 `Ask`、`Send`、`Stream`、`Continue` 和 `Resume` 使用。
 
 ### 会话管理
 

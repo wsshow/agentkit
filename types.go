@@ -11,8 +11,14 @@ import (
 // ChatModel 基础聊天模型接口
 type ChatModel = model.BaseChatModel
 
+// ModelOption 是单次模型调用选项，可通过 RunConfig 按请求传入。
+type ModelOption = model.Option
+
 // Tool 基础工具接口
 type Tool = tool.BaseTool
+
+// ToolOption 是单次工具调用选项，可通过 RunConfig 按请求传入。
+type ToolOption = tool.Option
 
 // ToolMiddleware 为工具调用添加自定义执行逻辑。
 type ToolMiddleware = compose.ToolMiddleware

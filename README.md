@@ -12,6 +12,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 
 - **Event-stream architecture** — Subscribe to fine-grained events (message deltas, tool calls, errors, etc.)
 - **Simple run results** — Use `Ask` for the final response, accumulated usage, tool calls, and interrupts without wiring subscribers
+- **Request-scoped configuration** — Override model/tool options and inject typed run values without mutating the Agent
 - **Steering & follow-up queues** — Inject messages mid-execution to redirect the agent or append follow-up tasks
 - **Human-in-the-loop (HITL)** — Interrupt agent execution and resume with user-provided data
 - **Streaming support** — Real-time token-by-token output via Eino ADK streaming
@@ -249,6 +250,26 @@ agent.Close()
 ```
 
 > `Prompt`, `Send`, `Continue`, and `Resume` are mutually exclusive. Use `errors.Is(err, agentkit.ErrAgentRunning)` to detect a concurrent run. After a HITL interrupt, start with `Resume`; fresh runs return `agentkit.ErrResumeRequired` until the checkpoint is resumed or cleared, preventing an unfinished tool action from being silently abandoned.
+
+### Request-Scoped Configuration
+
+Keep a shared Agent stable while customizing an individual request through its context:
+
+```go
+runCtx := agentkit.WithRunConfig(ctx, agentkit.RunConfig{
+    ModelOptions: []agentkit.ModelOption{
+        model.WithTemperature(0.2),
+        model.WithMaxTokens(2_000),
+    },
+    Values: map[string]any{
+        "user_name": "Alice",
+        "request_id": "req-42",
+    },
+})
+result, err := agent.Ask(runCtx, "Summarize this")
+```
+
+Run values format `{user_name}` placeholders when `SystemPrompt` is prepared. Tools and middleware can read them with `agentkit.RunValue[T](ctx, key)`, inspect a copy with `RunValues`, and update a value for later tools or middleware in the same underlying run with `SetRunValue`. `ToolOptions` provides the equivalent request-level escape hatch for custom tools. `WithRunConfig` copies its containers and works with `Ask`, `Send`, `Stream`, `Continue`, and `Resume` without changing those APIs.
 
 ### Session Management
 
