@@ -66,6 +66,53 @@ func TestFileGoalLeasePersistsAndRejectsStaleWorker(t *testing.T) {
 	}
 }
 
+func TestFileGoalLeaseRenewalPersistsAcrossStoreRestart(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	store, err := NewFileGoalStore(dir)
+	if err != nil {
+		t.Fatalf("create file goal store: %v", err)
+	}
+	store.now = func() time.Time { return now }
+	lease, err := store.AcquireGoalLease(ctx, "long-task", "worker-1", time.Minute)
+	if err != nil {
+		t.Fatalf("acquire lease: %v", err)
+	}
+	originalExpiry := lease.ExpiresAt
+
+	now = now.Add(20 * time.Second)
+	renewed, err := store.RenewGoalLease(ctx, lease, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("renew lease: %v", err)
+	}
+	if renewed.Token != lease.Token || !renewed.ExpiresAt.Equal(now.Add(2*time.Minute)) {
+		t.Fatalf("renewed lease = %#v", renewed)
+	}
+	if !lease.ExpiresAt.Equal(originalExpiry) {
+		t.Fatalf("RenewGoalLease mutated caller lease: %#v", lease)
+	}
+
+	reopened, err := NewFileGoalStore(dir)
+	if err != nil {
+		t.Fatalf("reopen file goal store: %v", err)
+	}
+	reopened.now = func() time.Time { return now }
+	if _, err := reopened.AcquireGoalLease(ctx, lease.GoalID, "worker-2", time.Minute); !errors.Is(err, ErrGoalLeaseHeld) {
+		t.Fatalf("reopened store did not retain renewed lease: %v", err)
+	} else {
+		var held *GoalLeaseHeldError
+		if !errors.As(err, &held) || !held.Lease.ExpiresAt.Equal(renewed.ExpiresAt) {
+			t.Fatalf("reopened held lease = %#v", held)
+		}
+	}
+
+	now = renewed.ExpiresAt.Add(time.Nanosecond)
+	if _, err := reopened.RenewGoalLease(ctx, renewed, time.Minute); !errors.Is(err, ErrGoalLeaseLost) {
+		t.Fatalf("expired renewal error = %v, want ErrGoalLeaseLost", err)
+	}
+}
+
 func TestFileGoalListIgnoresLeaseFiles(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewFileGoalStore(t.TempDir())
