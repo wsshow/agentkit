@@ -197,9 +197,7 @@ func (m *SessionManager) OpenOrCreate(ctx context.Context, options CreateSession
 		if err != nil {
 			return nil, false, err
 		}
-		m.mu.Lock()
-		m.active[options.ID] = agent
-		m.mu.Unlock()
+		m.trackAgent(options.ID, agent)
 		return agent, false, nil
 	}
 	if !errors.Is(err, ErrSessionNotFound) {
@@ -521,9 +519,7 @@ func (m *SessionManager) createAndOpen(ctx context.Context, session *Session) (*
 	if err != nil {
 		return nil, true, err
 	}
-	m.mu.Lock()
-	m.active[session.ID] = agent
-	m.mu.Unlock()
+	m.trackAgent(session.ID, agent)
 	return agent, true, nil
 }
 
@@ -546,9 +542,7 @@ func (m *SessionManager) openLocked(ctx context.Context, id string) (*Agent, err
 	if err != nil {
 		return nil, err
 	}
-	m.mu.Lock()
-	m.active[id] = agent
-	m.mu.Unlock()
+	m.trackAgent(id, agent)
 	return agent, nil
 }
 
@@ -629,6 +623,24 @@ func (m *SessionManager) usableActiveLocked(ctx context.Context, id string) (*Ag
 	}
 	m.mu.Unlock()
 	return nil, nil
+}
+
+func (m *SessionManager) trackAgent(id string, agent *Agent) {
+	agent.addCloseCallback(func() { m.untrackAgent(id, agent) })
+	m.mu.Lock()
+	m.active[id] = agent
+	m.mu.Unlock()
+	if agentCloseStarted(agent) {
+		m.untrackAgent(id, agent)
+	}
+}
+
+func (m *SessionManager) untrackAgent(id string, agent *Agent) {
+	m.mu.Lock()
+	if m.active[id] == agent {
+		delete(m.active, id)
+	}
+	m.mu.Unlock()
 }
 
 func (m *SessionManager) closeActiveLocked(ctx context.Context, id string) error {

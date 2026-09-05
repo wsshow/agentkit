@@ -73,12 +73,34 @@ func TestSessionManagerCreateOpenCloseAndRestore(t *testing.T) {
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
 	}
+	manager.mu.Lock()
+	trackedAfterDirectClose := len(manager.active)
+	manager.mu.Unlock()
+	if trackedAfterDirectClose != 0 {
+		t.Fatalf("manager retained %d directly closed Agents", trackedAfterDirectClose)
+	}
 	reopenedAgain, err := manager.Open(ctx, "session-1")
 	if err != nil {
 		t.Fatalf("Open(after direct close) error = %v", err)
 	}
 	if reopenedAgain == reopened {
 		t.Fatal("Open(after direct close) returned the closed Agent")
+	}
+}
+
+func TestAgentCloseCallbackPanicDoesNotBlockCleanup(t *testing.T) {
+	agent, err := New(context.Background(), &Config{Model: NewMockChatModel()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	agent.addCloseCallback(func() { panic("boom") })
+	agent.addCloseCallback(func() { called = true })
+	if err := agent.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if !called {
+		t.Fatal("later close callback was not called after panic")
 	}
 }
 

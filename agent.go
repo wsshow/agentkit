@@ -155,6 +155,7 @@ type Agent struct {
 	closeStarted   bool
 	closeDone      chan struct{}
 	closeErr       error
+	closeCallbacks []func()
 }
 
 type toolCallInfo struct {
@@ -767,11 +768,41 @@ func (a *Agent) startClose() <-chan struct{} {
 			err := closeMCPConnections(connections)
 			a.closeMu.Lock()
 			a.closeErr = err
+			callbacks := append([]func(){}, a.closeCallbacks...)
+			a.closeCallbacks = nil
+			a.closeMu.Unlock()
+			for _, callback := range callbacks {
+				runAgentCloseCallback(callback)
+			}
+			a.closeMu.Lock()
 			close(a.closeDone)
 			a.closeMu.Unlock()
 		}()
 	}
 	return a.closeDone
+}
+
+func (a *Agent) addCloseCallback(callback func()) {
+	if callback == nil {
+		return
+	}
+	a.closeMu.Lock()
+	if !a.closeStarted {
+		a.closeCallbacks = append(a.closeCallbacks, callback)
+		a.closeMu.Unlock()
+		return
+	}
+	done := a.closeDone
+	a.closeMu.Unlock()
+	go func() {
+		<-done
+		runAgentCloseCallback(callback)
+	}()
+}
+
+func runAgentCloseCallback(callback func()) {
+	defer func() { _ = recover() }()
+	callback()
 }
 
 // State 获取当前状态
