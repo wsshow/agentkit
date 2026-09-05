@@ -135,6 +135,18 @@ func TestNewValidatesConfig(t *testing.T) {
 			},
 			want: "skill tool name must not be blank",
 		},
+		{
+			name: "invalid skill tool name",
+			ctx:  context.Background(),
+			cfg: &Config{
+				Model: model,
+				Skills: &SkillsConfig{
+					Backend:  &MemorySkillBackend{},
+					ToolName: "load skill",
+				},
+			},
+			want: "invalid skill tool name",
+		},
 	}
 
 	for _, tt := range tests {
@@ -147,6 +159,19 @@ func TestNewValidatesConfig(t *testing.T) {
 				t.Fatalf("New() error = %v, want containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewRejectsInvalidLocalToolName(t *testing.T) {
+	tool := MustMockTool("invalid tool", "invalid", func(context.Context, string) (string, error) {
+		return "", nil
+	})
+	agent, err := New(context.Background(), &Config{
+		Model: NewMockChatModel(),
+		Tools: MockTools(tool),
+	})
+	if agent != nil || err == nil || !strings.Contains(err.Error(), "invalid tool name") {
+		t.Fatalf("New() = %#v, %v, want invalid tool name", agent, err)
 	}
 }
 

@@ -359,6 +359,11 @@ func validateSkillsConfig(cfg *SkillsConfig) error {
 	if cfg.ToolName != "" && strings.TrimSpace(cfg.ToolName) == "" {
 		return errors.New("agentkit: skill tool name must not be blank")
 	}
+	if cfg.ToolName != "" {
+		if err := validateToolName(cfg.ToolName); err != nil {
+			return fmt.Errorf("agentkit: invalid skill tool name %q: %w", cfg.ToolName, err)
+		}
+	}
 	return nil
 }
 

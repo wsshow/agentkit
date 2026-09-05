@@ -302,7 +302,7 @@ func validateMCPTools(ctx context.Context, server MCPServerConfig, tools []Tool)
 		if info == nil {
 			return fmt.Errorf("agentkit: MCP server %q returned a tool without metadata", server.Name)
 		}
-		if err := validateMCPToolName(info.Name); err != nil {
+		if err := validateToolName(info.Name); err != nil {
 			return fmt.Errorf("agentkit: MCP server %q exposed invalid tool name %q: %w", server.Name, info.Name, err)
 		}
 		if rawName, ok := info.Extra[officialmcp.ExtraMCPRawToolName].(string); ok {
@@ -317,7 +317,7 @@ func validateMCPTools(ctx context.Context, server MCPServerConfig, tools []Tool)
 	return nil
 }
 
-func validateMCPToolName(name string) error {
+func validateToolName(name string) error {
 	if name == "" {
 		return errors.New("name is empty")
 	}
@@ -379,6 +379,9 @@ func validateCombinedToolNames(ctx context.Context, tools []Tool, skills *Skills
 		if name == "" {
 			name = "skill"
 		}
+		if err := validateToolName(name); err != nil {
+			return fmt.Errorf("agentkit: invalid skill tool name %q: %w", name, err)
+		}
 		seen[name] = struct{}{}
 	}
 	for index, item := range tools {
@@ -391,6 +394,9 @@ func validateCombinedToolNames(ctx context.Context, tools []Tool, skills *Skills
 		}
 		if info == nil || strings.TrimSpace(info.Name) == "" {
 			return fmt.Errorf("agentkit: tool %d has no name", index)
+		}
+		if err := validateToolName(info.Name); err != nil {
+			return fmt.Errorf("agentkit: invalid tool name %q: %w", info.Name, err)
 		}
 		if _, ok := seen[info.Name]; ok {
 			return fmt.Errorf("agentkit: duplicate tool name %q; tool names must be unique (use MCP ToolPrefix when needed)", info.Name)
