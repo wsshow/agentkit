@@ -111,7 +111,7 @@ result, err := agent.Ask(runCtx, "请总结这段内容")
 | `EventAgentEnd` | Agent 执行结束 |
 | `EventError` | `Error` 中的非终止或终止错误 |
 
-`agent.Subscribe` 注册全局观察器并返回取消订阅函数。全局回调同步执行，应尽快返回。回调 panic 会被隔离，其他订阅者会收到包装 `ErrSubscriberPanic` 的 `EventError`。
+`agent.Subscribe` 注册全局观察器并返回取消订阅函数。绑定会话的 Agent 所产生事件会携带稳定的 `SessionID`。全局回调同步执行，应尽快返回。回调 panic 会被隔离，其他订阅者会收到包装 `ErrSubscriberPanic` 的 `EventError`。需要汇聚多个会话时使用 `SessionManager.Subscribe`。
 
 工具无需知道订阅者即可报告进度：
 

@@ -144,6 +144,17 @@ err = manager.Delete(ctx, "conversation-42")
 err = manager.CloseContext(ctx)
 ```
 
+Subscribe once when a service needs a unified event feed for every opened conversation:
+
+```go
+unsubscribe := manager.Subscribe(func(event agentkit.Event) {
+	logEvent(event.SessionID, event)
+})
+defer unsubscribe()
+```
+
+The manager automatically attaches future Agents and detaches them when they close. Session-bound events also carry `SessionID` when subscribed directly through `agent.Subscribe`. Event order is preserved within one Agent; callbacks must be concurrency-safe because different sessions can emit at the same time.
+
 `CloseSession` releases Agent and MCP resources but keeps persistent data. `Delete` closes first and then removes the data. Closing the manager closes every active Agent but does not delete sessions.
 
 If another process has already removed the durable record, `Delete` still closes any Agent tracked by this manager. The call remains idempotent and cannot leave a local instance running after its session has disappeared from storage.

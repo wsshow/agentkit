@@ -144,6 +144,17 @@ err = manager.Delete(ctx, "conversation-42")
 err = manager.CloseContext(ctx)
 ```
 
+服务需要统一接收所有已打开会话的事件时，只订阅管理器一次即可：
+
+```go
+unsubscribe := manager.Subscribe(func(event agentkit.Event) {
+	logEvent(event.SessionID, event)
+})
+defer unsubscribe()
+```
+
+管理器会自动接入后续创建的 Agent，并在实例关闭时解除转发。通过 `agent.Subscribe` 直接订阅时，会话型 Agent 的事件同样携带 `SessionID`。单个 Agent 内保持事件顺序；不同会话可以同时发出事件，因此回调必须并发安全。
+
 `CloseSession` 释放 Agent 和 MCP 资源但保留持久化数据；`Delete` 会先关闭再删除；关闭管理器会关闭全部活动 Agent，但不会删除任何会话。
 
 即使持久化记录已经被其他进程删除，`Delete` 仍会关闭当前管理器跟踪的活动 Agent。该调用保持幂等，不会在会话已从存储消失后留下继续运行的本地实例。

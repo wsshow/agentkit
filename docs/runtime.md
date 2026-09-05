@@ -111,7 +111,7 @@ Retry and failover callbacks are panic-isolated. Control callbacks that return e
 | `EventAgentEnd` | Agent execution ended |
 | `EventError` | Non-fatal or terminal error in `Error` |
 
-`agent.Subscribe` registers a global observer and returns an unsubscribe function. Global callbacks run synchronously and should return quickly. A callback panic is isolated; other subscribers receive an `EventError` wrapping `ErrSubscriberPanic`.
+`agent.Subscribe` registers a global observer and returns an unsubscribe function. Events from a session-bound Agent carry its stable `SessionID`. Global callbacks run synchronously and should return quickly. A callback panic is isolated; other subscribers receive an `EventError` wrapping `ErrSubscriberPanic`. For a combined feed across conversations, use `SessionManager.Subscribe`.
 
 Tools can report progress without knowing about subscribers:
 
