@@ -88,6 +88,45 @@ func TestSessionManagerCreateOpenCloseAndRestore(t *testing.T) {
 	}
 }
 
+func TestSessionManagerAggregatesSessionEvents(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	manager, err := NewSessionManager(&SessionManagerConfig{
+		Store: store,
+		AgentConfig: &Config{
+			Name:  "assistant",
+			Model: NewMockChatModel(MockModelText("done")),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	var managerEvents []Event
+	manager.Subscribe(func(event Event) { managerEvents = append(managerEvents, event) })
+	agent, err := manager.CreateWithOptions(ctx, CreateSessionOptions{ID: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var agentEvents []Event
+	agent.Subscribe(func(event Event) { agentEvents = append(agentEvents, event) })
+
+	if err := agent.Prompt(ctx, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	for name, events := range map[string][]Event{"manager": managerEvents, "agent": agentEvents} {
+		if len(events) == 0 {
+			t.Fatalf("%s received no events", name)
+		}
+		for _, event := range events {
+			if event.SessionID != "session-1" {
+				t.Fatalf("%s event SessionID = %q, want session-1: %#v", name, event.SessionID, event)
+			}
+		}
+	}
+}
+
 func TestAgentCloseCallbackPanicDoesNotBlockCleanup(t *testing.T) {
 	agent, err := New(context.Background(), &Config{Model: NewMockChatModel()})
 	if err != nil {

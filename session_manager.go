@@ -59,6 +59,7 @@ type SessionManager struct {
 	ownerID     string
 	factory     SessionAgentFactory
 	idGenerator func() string
+	events      *emitter
 
 	mu         sync.Mutex
 	active     map[string]*Agent
@@ -123,9 +124,16 @@ func NewSessionManager(cfg *SessionManagerConfig) (*SessionManager, error) {
 		ownerID:     cfg.OwnerID,
 		factory:     factory,
 		idGenerator: idGenerator,
+		events:      newEmitter(),
 		active:      make(map[string]*Agent),
 		gates:       make(map[string]*sessionOperationGate),
 	}, nil
+}
+
+// Subscribe 订阅当前管理器内所有会话的事件。
+// 每个事件都携带 SessionID；不同会话并发运行时回调也可能并发执行。
+func (m *SessionManager) Subscribe(fn Subscriber) func() {
+	return m.events.Subscribe(fn)
 }
 
 // Create 创建并打开一个使用自动 ID 的会话。
@@ -638,7 +646,11 @@ func (m *SessionManager) usableActiveLocked(ctx context.Context, id string) (*Ag
 }
 
 func (m *SessionManager) trackAgent(id string, agent *Agent) {
-	agent.addCloseCallback(func() { m.untrackAgent(id, agent) })
+	unsubscribe := agent.Subscribe(m.events.Emit)
+	agent.addCloseCallback(func() {
+		unsubscribe()
+		m.untrackAgent(id, agent)
+	})
 	m.mu.Lock()
 	m.active[id] = agent
 	m.mu.Unlock()

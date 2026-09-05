@@ -39,6 +39,7 @@ const (
 type Event struct {
 	Type             EventType
 	Agent            string           // 产生事件的 Agent 名称
+	SessionID        string           // 产生事件的会话 ID；未启用会话时为空
 	Role             RoleType         // 消息角色（message_start / message_end）
 	Content          string           // 文本内容（message_end / tool_end）
 	Delta            string           // 流式增量内容（message_delta / reasoning_delta）

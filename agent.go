@@ -687,7 +687,16 @@ func (a *Agent) resumeWithResult(ctx context.Context, targets map[string]any) (*
 // Subscribe 订阅事件流，返回取消订阅函数。
 // 回调按订阅顺序同步执行，每个回调收到独立的事件快照；nil 回调会被忽略。
 func (a *Agent) Subscribe(fn Subscriber) func() {
-	return a.emtr.Subscribe(fn)
+	if fn == nil {
+		return func() {}
+	}
+	sessionID := a.sessionID
+	return a.emtr.Subscribe(func(event Event) {
+		if event.SessionID == "" {
+			event.SessionID = sessionID
+		}
+		fn(event)
+	})
 }
 
 // Cancel 请求取消当前执行且不等待完成。
