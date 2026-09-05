@@ -93,9 +93,12 @@ func cloneHistoryMessages(messages []*schema.Message) []*schema.Message {
 	if messages == nil {
 		return nil
 	}
-	out := make([]*schema.Message, len(messages))
-	for i, msg := range messages {
-		out[i] = cloneHistoryMessage(msg)
+	out := make([]*schema.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg == nil {
+			continue
+		}
+		out = append(out, cloneHistoryMessage(msg))
 	}
 	return out
 }

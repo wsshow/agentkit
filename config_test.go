@@ -175,6 +175,32 @@ func TestNewRejectsInvalidLocalToolName(t *testing.T) {
 	}
 }
 
+func TestAgentIgnoresNilHistoryMessages(t *testing.T) {
+	agent, err := New(context.Background(), &Config{
+		Model: NewMockChatModel(MockModelText("continued")),
+		History: []*schema.Message{
+			nil,
+			schema.UserMessage("resume me"),
+			nil,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer agent.Close()
+
+	result, err := agent.ContinueWithResult(context.Background())
+	if err != nil {
+		t.Fatalf("ContinueWithResult() error = %v", err)
+	}
+	if result.Text != "continued" {
+		t.Fatalf("ContinueWithResult().Text = %q, want continued", result.Text)
+	}
+	if history := agent.History(); len(history) != 2 || history[0] == nil || history[1] == nil {
+		t.Fatalf("History() = %#v, want two non-nil messages", history)
+	}
+}
+
 func TestNewAlwaysValidatesLocalTools(t *testing.T) {
 	ctx := context.Background()
 	first := MustMockTool("duplicate", "first", func(context.Context, string) (string, error) {
