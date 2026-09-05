@@ -350,6 +350,8 @@ Recreate the file store and Agent with the same session ID after a process resta
 
 Goal state is committed before work, after Agent output, and after evaluation. If saved session history proves that a step finished, `Resume` evaluates it without repeating the work. If the process could have exited after an external side effect but before session progress was saved, the goal becomes `blocked` with `ErrGoalRecoveryRequired`; only the explicit `Retry` method may replay that uncertain step. This favors safety over pretending to provide exactly-once external effects.
 
+The built-in goal stores also implement the optional `GoalLeaseStore` interface. It provides expiring ownership, renewal, safe release, and token-fenced saves/deletes without changing the base `GoalStore` contract. This is the storage primitive used to prevent a stale worker from committing after another worker takes over.
+
 One worker should own a goal ID at a time. Built-in memory and file stores protect goroutines and reject stale revisions, but the file store is intended for a local single-process worker. Distributed deployments should implement database-backed `SessionStore`, `CheckpointStore`, and `GoalStore`, and use their job system's lease or claim mechanism around `Start`/`Resume`. `GoalRunner` does not keep running after its host process stops; a supervisor should restart the worker and call `Resume`.
 
 ### Automatic Context Compaction

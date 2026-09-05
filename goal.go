@@ -81,15 +81,23 @@ type GoalStoreProvider interface {
 
 // MemoryGoalStore 是并发安全的内存目标存储，适合测试和单进程服务。
 type MemoryGoalStore struct {
-	mu    sync.RWMutex
-	goals map[string]*Goal
+	mu     sync.RWMutex
+	goals  map[string]*Goal
+	leases map[string]*GoalLease
+	now    func() time.Time
 }
 
-var _ GoalStore = (*MemoryGoalStore)(nil)
+var (
+	_ GoalStore      = (*MemoryGoalStore)(nil)
+	_ GoalLeaseStore = (*MemoryGoalStore)(nil)
+)
 
 // NewMemoryGoalStore 创建内存目标存储。
 func NewMemoryGoalStore() *MemoryGoalStore {
-	return &MemoryGoalStore{goals: make(map[string]*Goal)}
+	return &MemoryGoalStore{
+		goals:  make(map[string]*Goal),
+		leases: make(map[string]*GoalLease),
+	}
 }
 
 // Load 加载目标快照。
@@ -114,6 +122,10 @@ func (s *MemoryGoalStore) Save(ctx context.Context, goal *Goal) error {
 	cloned := normalizedGoal(goal)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveLocked(goal, cloned)
+}
+
+func (s *MemoryGoalStore) saveLocked(goal, cloned *Goal) error {
 	if s.goals == nil {
 		s.goals = make(map[string]*Goal)
 	}

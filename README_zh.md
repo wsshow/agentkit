@@ -350,6 +350,8 @@ result, err := goals.Start(ctx, agentkit.GoalRequest{
 
 目标状态会在工作开始前、Agent 产出后和完成度判断后分别提交。如果已保存的会话历史能证明某一步已经结束，`Resume` 会直接判断该结果，不重复执行。若进程可能在外部副作用已经发生、但会话进度尚未保存时退出，目标会以 `ErrGoalRecoveryRequired` 进入 `blocked`，只有显式调用 `Retry` 才会重放这个不确定步骤。这里优先保证安全，不虚假承诺外部操作 exactly-once。
 
+两个内置目标存储也实现了可选的 `GoalLeaseStore` 接口，在不破坏基础 `GoalStore` 契约的前提下提供带过期时间的所有权、续期、安全释放以及 Token fencing 的保存/删除能力。这是防止旧 worker 在目标被接管后继续提交状态的存储基础。
+
 同一个目标 ID 同一时间应只有一个 worker 执行。内置内存和文件存储会保护 goroutine 并拒绝旧版本覆盖，但文件存储定位于本地单进程 worker。分布式部署应实现数据库版 `SessionStore`、`CheckpointStore` 与 `GoalStore`，并在 `Start`/`Resume` 外使用任务系统的租约或抢占机制。`GoalRunner` 不会在宿主进程停止后凭空继续运行；应由 supervisor 拉起 worker 并调用 `Resume`。
 
 ### 自动上下文压缩

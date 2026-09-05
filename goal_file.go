@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 const fileGoalVersion = 1
@@ -23,9 +24,13 @@ type storedGoal struct {
 type FileGoalStore struct {
 	dir string
 	mu  sync.RWMutex
+	now func() time.Time
 }
 
-var _ GoalStore = (*FileGoalStore)(nil)
+var (
+	_ GoalStore      = (*FileGoalStore)(nil)
+	_ GoalLeaseStore = (*FileGoalStore)(nil)
+)
 
 // NewFileGoalStore 创建文件目标存储。目录不存在时会自动创建。
 func NewFileGoalStore(dir string) (*FileGoalStore, error) {
@@ -56,7 +61,10 @@ func (s *FileGoalStore) Save(ctx context.Context, goal *Goal) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.saveLocked(goal)
+}
 
+func (s *FileGoalStore) saveLocked(goal *Goal) error {
 	current, err := s.load(goal.ID)
 	if err != nil && !errors.Is(err, ErrGoalNotFound) {
 		return err
