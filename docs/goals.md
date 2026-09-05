@@ -89,6 +89,7 @@ For a goal paused at HITL, submit the pending interrupt IDs and user data throug
 Goal state is committed before work, after Agent output, and after evaluation. Recovery uses those boundaries:
 
 - If saved session history proves the step completed, `Resume` evaluates it without repeating the work.
+- Recovery also verifies that new session history starts with the prompt recorded for that goal attempt. If ordinary conversation or another worker changed the session instead, the goal becomes `blocked` rather than treating unrelated output as completed work.
 - If a process may have stopped after an external side effect but before progress was saved, the goal becomes `blocked` and returns `ErrGoalRecoveryRequired`.
 - Only explicit `Retry` or `RetryAsync` may replay that uncertain step.
 

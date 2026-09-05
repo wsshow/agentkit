@@ -89,6 +89,7 @@ result, err := goals.Resume(ctx, "release-v2")
 目标状态会在执行工作前、Agent 输出后和判断后分别提交。恢复会利用这些边界：
 
 - 已保存会话历史能够证明步骤完成时，`Resume` 直接进入判断，不重复工作。
+- 恢复还会确认新增会话历史以该目标尝试已记录的提示开头；如果普通对话或其他 worker 已经改写会话，目标会进入 `blocked`，不会把无关输出当成已完成工作。
 - 进程可能在外部副作用完成后、进度保存前退出时，目标进入 `blocked` 并返回 `ErrGoalRecoveryRequired`。
 - 只有显式 `Retry` 或 `RetryAsync` 才能重放这个结果不确定的步骤。
 
