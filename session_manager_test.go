@@ -286,6 +286,44 @@ func TestSessionManagerRejectsUnauthorizedFactoryAgent(t *testing.T) {
 	}
 }
 
+func TestSessionManagerRejectsFactoryAgentUsingAnotherStore(t *testing.T) {
+	ctx := context.Background()
+	authoritative := NewMemorySessionStore()
+	foreign := NewMemorySessionStore()
+	for _, store := range []*MemorySessionStore{authoritative, foreign} {
+		if err := store.Save(ctx, &Session{
+			ID: "same-id", SessionMetadata: SessionMetadata{OwnerID: "owner-1"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var returned *Agent
+	manager, err := NewSessionManager(&SessionManagerConfig{
+		Store: authoritative, OwnerID: "owner-1",
+		AgentFactory: func(ctx context.Context, session SessionConfig) (*Agent, error) {
+			var err error
+			returned, err = New(ctx, &Config{
+				Name: "assistant", Model: NewMockChatModel(),
+				Session: &SessionConfig{ID: session.ID, Store: foreign},
+			})
+			return returned, err
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err := manager.Open(ctx, "same-id"); !errors.Is(err, ErrSessionFactoryMismatch) {
+		t.Fatalf("Open() error = %v, want ErrSessionFactoryMismatch", err)
+	}
+	if returned == nil || !agentCloseStarted(returned) {
+		t.Fatal("mismatched factory Agent was not closed")
+	}
+	if len(manager.ActiveSessionIDs()) != 0 {
+		t.Fatalf("mismatched Agent became active: %v", manager.ActiveSessionIDs())
+	}
+}
+
 func TestSessionManagerForkCopiesConversationWithoutOperationalState(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()

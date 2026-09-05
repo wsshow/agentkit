@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +24,8 @@ var (
 	ErrSessionAccessDenied = errors.New("agentkit: session access denied")
 	// ErrSessionFactoryPanic 表示自定义会话 Agent 工厂发生 panic。
 	ErrSessionFactoryPanic = errors.New("agentkit: session agent factory panicked")
+	// ErrSessionFactoryMismatch 表示自定义工厂返回的 Agent 未绑定到管理器提供的会话或存储。
+	ErrSessionFactoryMismatch = errors.New("agentkit: session agent factory binding mismatch")
 	// ErrSessionIDGeneratorPanic 表示自定义会话 ID 生成器发生 panic。
 	ErrSessionIDGeneratorPanic = errors.New("agentkit: session ID generator panicked")
 )
@@ -569,11 +572,15 @@ func (m *SessionManager) buildAgent(ctx context.Context, id string) (agent *Agen
 	snapshot := agent.Session()
 	if snapshot == nil || snapshot.ID != id {
 		_ = agent.Close()
-		return nil, fmt.Errorf("agentkit: session agent factory returned an agent not bound to session %q", id)
+		return nil, fmt.Errorf("%w: expected session %q", ErrSessionFactoryMismatch, id)
 	}
 	if err := m.authorize(snapshot); err != nil {
 		_ = agent.Close()
 		return nil, fmt.Errorf("agentkit: session agent factory returned an unauthorized agent: %w", err)
+	}
+	if sessionStoresDiffer(agent.sessionStore, m.store) {
+		_ = agent.Close()
+		return nil, fmt.Errorf("%w: agent for session %q uses another store", ErrSessionFactoryMismatch, id)
 	}
 	if agentCloseStarted(agent) {
 		_ = agent.Close()
@@ -861,6 +868,18 @@ func agentCloseStarted(agent *Agent) bool {
 	agent.closeMu.Lock()
 	defer agent.closeMu.Unlock()
 	return agent.closeStarted
+}
+
+func sessionStoresDiffer(left, right SessionStore) bool {
+	leftType, rightType := reflect.TypeOf(left), reflect.TypeOf(right)
+	if leftType != rightType {
+		return true
+	}
+	// Pointer-based stores, including all built-in stores, are comparable. A
+	// rare value-based implementation may contain maps or slices; do not panic
+	// while checking it, and leave its own factory contract responsible for
+	// preserving the exact store value.
+	return leftType != nil && leftType.Comparable() && left != right
 }
 
 func validateReusableSessionAgentConfig(config *Config) error {
