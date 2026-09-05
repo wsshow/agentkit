@@ -201,7 +201,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 
 	a := &Agent{
 		name:               cfg.Name,
-		model:              cfg.Model,
+		model:              guardChatModel(cfg.Model),
 		state:              newState(),
 		emtr:               newEmitter(),
 		checkPointID:       checkPointID,
@@ -259,7 +259,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		handlers = append(handlers, reductionMiddleware)
 	}
 	if cfg.Compaction != nil {
-		middleware, err := newCompactionMiddleware(ctx, a, cfg.Model, cfg.Compaction)
+		middleware, err := newCompactionMiddleware(ctx, a, a.model, cfg.Compaction)
 		if err != nil {
 			return nil, err
 		}
@@ -303,7 +303,7 @@ func New(ctx context.Context, cfg *Config) (*Agent, error) {
 		Name:                cfg.Name,
 		Description:         desc,
 		Instruction:         cfg.SystemPrompt,
-		Model:               cfg.Model,
+		Model:               a.model,
 		MaxIterations:       maxIter,
 		Handlers:            handlers,
 		ModelRetryConfig:    a.modelRetry,

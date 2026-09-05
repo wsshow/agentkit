@@ -17,6 +17,7 @@ Inspired by [pi-agent-core](https://github.com/earendil-works/pi/tree/main/packa
 - **Human-in-the-loop (HITL)** — Interrupt agent execution and resume with user-provided data
 - **Streaming support** — Real-time token-by-token output via Eino ADK streaming
 - **Reasoning model support** — First-class support for thinking/reasoning models (DeepSeek-R1, o1, etc.) with streaming reasoning output
+- **Guarded model integration** — Convert provider panics from generation and stream reads into ordinary, retryable errors
 - **Multimodal input** — Send text, images, audio, video, and files via `Send()` with ergonomic constructors
 - **Session persistence** — Automatically save and restore complete conversations with built-in concurrent memory and atomic file stores
 - **Durable goal runs** — Persist an objective, evaluate completion after each step, and resume safely after cancellation or restart

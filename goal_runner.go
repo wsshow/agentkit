@@ -93,7 +93,7 @@ func newModelGoalEvaluator(
 	if model == nil {
 		return nil, errors.New("agentkit: goal evaluator model is required")
 	}
-	return &ModelGoalEvaluator{model: model, modelRetry: retry, modelFailover: failover}, nil
+	return &ModelGoalEvaluator{model: guardChatModel(model), modelRetry: retry, modelFailover: failover}, nil
 }
 
 // Evaluate 要求模型仅返回结构化的目标判断结果。

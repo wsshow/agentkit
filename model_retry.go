@@ -19,6 +19,7 @@ func generateModelWithRetry(
 	config *ModelRetryConfig,
 	options ...ModelOption,
 ) (*schema.Message, error) {
+	chatModel = guardChatModel(chatModel)
 	if config == nil {
 		return chatModel.Generate(ctx, input, options...)
 	}

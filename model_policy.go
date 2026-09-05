@@ -89,7 +89,8 @@ func guardedModelFailoverConfig(agent *Agent, config *ModelFailoverConfig) *Mode
 					err = modelPolicyPanicError("GetFailoverModel", value)
 				}
 			}()
-			return getFailoverModel(ctx, failover)
+			chatModel, input, err = getFailoverModel(ctx, failover)
+			return guardChatModel(chatModel), input, err
 		}
 	}
 	return &guarded

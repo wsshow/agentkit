@@ -70,7 +70,7 @@ func newCompactionMiddleware(ctx context.Context, agent *Agent, primaryModel Cha
 		model = primaryModel
 	}
 	model = &resilientCompactionModel{
-		model:    model,
+		model:    guardChatModel(model),
 		retry:    agent.modelRetry,
 		failover: agent.modelFailover,
 	}
