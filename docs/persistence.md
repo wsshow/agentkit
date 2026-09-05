@@ -50,7 +50,7 @@ agent.SetHistory(replacement)
 err := agent.SaveSession(ctx)
 ```
 
-`History` and `Session` return copies. `SetHistory` invalidates stale checkpoints; call `SaveSession` when the replacement must be immediately durable. `Reset` clears history and queues after waiting for an active run to finish.
+`History` and `Session` return deep copies, including nested metadata in current and legacy Eino multimodal message fields. `SetHistory` invalidates stale checkpoints; call `SaveSession` when the replacement must be immediately durable. `Reset` clears history and queues after waiting for an active run to finish.
 
 Nil message entries can appear when external JSON or database rows are assembled incorrectly. AgentKit drops those empty entries at the common history-copy boundary, so manual history and restored sessions cannot pass a nil message into the model runtime. Non-nil messages remain in their original order.
 

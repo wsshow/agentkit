@@ -50,7 +50,7 @@ agent.SetHistory(replacement)
 err := agent.SaveSession(ctx)
 ```
 
-`History` 和 `Session` 返回副本。`SetHistory` 会使旧检查点失效；需要立即持久化替换内容时调用 `SaveSession`。`Reset` 会等待当前运行结束，然后清空历史和队列。
+`History` 和 `Session` 返回深拷贝，其中包括 Eino 新旧多模态消息字段的嵌套元数据。`SetHistory` 会使旧检查点失效；需要立即持久化替换内容时调用 `SaveSession`。`Reset` 会等待当前运行结束，然后清空历史和队列。
 
 外部 JSON 或数据库记录拼装错误时可能产生 nil 消息项。AgentKit 会在统一历史复制边界丢弃这些空项，避免手工历史或恢复会话把 nil 消息传进模型运行时；其余非 nil 消息的原始顺序保持不变。
 
