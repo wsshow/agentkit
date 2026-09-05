@@ -23,7 +23,8 @@ For work that may take hours or days:
 
 1. Start with the production-assistant path.
 2. Use [Durable goals](goals.md) for restart and reconnect semantics.
-3. Use [MCP](mcp.md) or [Skills](skills.md) only where the task requires them.
+3. Connect [Scheduling and wakeups](scheduling.md) when work must start later or recur.
+4. Use [MCP](mcp.md) or [Skills](skills.md) only where the task requires them.
 
 For coordinated specialist work:
 
@@ -39,6 +40,7 @@ For coordinated specialist work:
 | [Sessions and persistence](persistence.md) | Session restore/save, checkpoints, stores, concurrency, retention |
 | [Multi-session management](sessions.md) | Creation, reconnect, ownership, pagination, archive, fork, and Agent lifecycle |
 | [Durable goals](goals.md) | `/goal`-style loops, async execution, reconnect, recovery, leases, idempotency |
+| [Scheduling and wakeups](scheduling.md) | Reliable integration with cron, queues, cloud schedulers, and supervisors |
 | [Subagents](subagents.md) | Declarative specialists, isolation, budgets, events, nested HITL and goal integration |
 | [Context management](context.md) | Full history versus model context, automatic compaction, ordering with reduction |
 | [Skills](skills.md) | Local `SKILL.md` discovery, custom backends, validation and boundaries |

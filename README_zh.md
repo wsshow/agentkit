@@ -94,6 +94,7 @@ result, err := stream.Wait()
 | 为用户或租户管理多个隔离会话 | [多会话管理](docs/zh/sessions.md) |
 | 进程重启后恢复对话和检查点 | [会话与持久化](docs/zh/persistence.md) |
 | 运行数小时或数天的多步骤目标，并安全重连 | [持久化目标](docs/zh/goals.md) |
+| 通过 cron、队列或云调度器唤醒目标 | [调度与唤醒](docs/zh/scheduling.md) |
 | 把专业工作委派给上下文隔离的专家 Agent | [子智能体](docs/zh/subagents.md) |
 | 让长对话保持在模型上下文窗口内 | [上下文管理](docs/zh/context.md) |
 | 按需加载可复用的 `SKILL.md` 指令 | [技能管理](docs/zh/skills.md) |

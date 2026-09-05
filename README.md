@@ -94,6 +94,7 @@ See [Runtime and events](docs/runtime.md) for the complete run API, lifecycle ru
 | Manage many isolated conversations for users or tenants | [Multi-session management](docs/sessions.md) |
 | Restore conversations and checkpoints after restart | [Sessions and persistence](docs/persistence.md) |
 | Run a multi-step objective for hours or days and reconnect safely | [Durable goals](docs/goals.md) |
+| Wake goals from cron, queues, or cloud schedulers | [Scheduling and wakeups](docs/scheduling.md) |
 | Delegate focused work to isolated specialist agents | [Subagents](docs/subagents.md) |
 | Keep long conversations inside the model context window | [Context management](docs/context.md) |
 | Load reusable `SKILL.md` instructions on demand | [Skills](docs/skills.md) |
