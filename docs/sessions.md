@@ -173,7 +173,7 @@ manager, err := agentkit.NewSessionManager(&agentkit.SessionManagerConfig{
 })
 ```
 
-The factory must use the supplied `SessionConfig`; the manager rejects an Agent bound to a different ID. Factory panics are converted to `ErrSessionFactoryPanic`. A preconnected MCP `Session` cannot be reused through `AgentConfig` because each Agent owns and closes its MCP connections—use MCP transport settings or a factory instead.
+The factory must use the supplied `SessionConfig`; the manager rejects an Agent bound to a different ID or a different comparable `SessionStore` with `ErrSessionFactoryMismatch`. This prevents a factory mistake from making the manager read one conversation while the Agent writes another. Factory panics are converted to `ErrSessionFactoryPanic`. A preconnected MCP `Session` cannot be reused through `AgentConfig` because each Agent owns and closes its MCP connections—use MCP transport settings or a factory instead.
 
 ## Related Guides
 

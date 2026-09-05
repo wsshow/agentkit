@@ -173,7 +173,7 @@ manager, err := agentkit.NewSessionManager(&agentkit.SessionManagerConfig{
 })
 ```
 
-工厂必须使用传入的 `SessionConfig`，管理器会拒绝绑定到其他 ID 的 Agent。工厂 panic 会转换为 `ErrSessionFactoryPanic`。预连接的 MCP `Session` 由 Agent 独占并负责关闭，因此不能通过 `AgentConfig` 在多个 Agent 间复用；此时应使用 MCP 传输配置或工厂。
+工厂必须使用传入的 `SessionConfig`；绑定到其他 ID 或其他可比较 `SessionStore` 的 Agent 会被管理器以 `ErrSessionFactoryMismatch` 拒绝。这能避免工厂配置错误导致管理器读取一份会话、Agent 却写入另一份存储。工厂 panic 会转换为 `ErrSessionFactoryPanic`。预连接的 MCP `Session` 由 Agent 独占并负责关闭，因此不能通过 `AgentConfig` 在多个 Agent 间复用；此时应使用 MCP 传输配置或工厂。
 
 ## 相关指南
 
