@@ -641,7 +641,7 @@ ToolPolicy: &agentkit.ToolPolicy{
 }
 ```
 
-`New` 会根据全部本地、Skill 和 MCP 工具校验别名，别名冲突或引用不存在的正式工具都会立即失败。所有文本工具结果默认最多保留 `DefaultToolResultMaxChars`（100,000 个 Unicode 字符），截断时会附加提示标记；将 `MaxResultChars` 设为 `-1` 可关闭限制。启用 `ToolReduction` 后，它会安全接管这项有损限长，确保超大结果先完整持久化。`Timeout` 使用 `context` 协作取消，因此自定义工具应在 `ctx.Done()` 关闭后及时停止。`BeforeTool` 可通过返回错误拒绝调用，`AfterTool` 会收到耗时、错误、保留文本大小和截断信息。工具实现本身（包括读取其返回流时）发生的 panic 会转为包装 `ErrToolExecutionPanic` 的错误。普通策略回调的 panic 也会被隔离：控制型回调返回包装 `ErrToolPolicyPanic` 的错误，`AfterTool` panic 则通过 `EventError` 上报，不会覆盖成功的工具结果。工具默认并行执行，因此钩子必须并发安全。这些保护统一覆盖普通、流式及多模态工具。高级拦截场景仍可通过 `Middlewares` 传入 `agentkit.ToolMiddleware`。
+`New` 会根据全部本地、Skill 和 MCP 工具校验别名，别名冲突或引用不存在的正式工具都会立即失败。所有文本工具结果默认最多保留 `DefaultToolResultMaxChars`（100,000 个 Unicode 字符），截断时会附加提示标记；将 `MaxResultChars` 设为 `-1` 可关闭限制。启用 `ToolReduction` 后，它会安全接管这项有损限长，确保超大结果先完整持久化。`Timeout` 使用 `context` 协作取消，因此自定义工具应在 `ctx.Done()` 关闭后及时停止。`BeforeTool` 可通过返回错误拒绝调用，`AfterTool` 会收到耗时、错误、保留文本大小和截断信息。工具实现或中间件端点本身（包括读取其返回流时）发生的 panic 会转为包装 `ErrToolExecutionPanic` 的错误。普通策略回调和自定义中间件工厂的 panic 也会被隔离：控制型回调与中间件工厂返回包装 `ErrToolPolicyPanic` 的错误，`AfterTool` panic 则通过 `EventError` 上报，不会覆盖成功的工具结果。工具默认并行执行，因此钩子必须并发安全。这些保护统一覆盖普通、流式及多模态工具。高级拦截场景仍可通过 `Middlewares` 传入 `agentkit.ToolMiddleware`。
 
 AgentKit 还会在每次模型请求前自动修复没有配对结果的工具调用。该能力默认开启，取消或中断的工具批次不会再留下被 OpenAI 兼容接口拒绝的历史格式。
 

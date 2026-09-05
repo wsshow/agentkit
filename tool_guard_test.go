@@ -188,6 +188,65 @@ func TestToolPolicyBeforeToolPanicBecomesError(t *testing.T) {
 	}
 }
 
+func TestToolPolicyIsolatesMiddlewareFactoryPanics(t *testing.T) {
+	guarded := guardToolMiddleware(ToolMiddleware{
+		Invokable: func(InvokableToolEndpoint) InvokableToolEndpoint {
+			panic("broken invokable middleware")
+		},
+		Streamable: func(StreamableToolEndpoint) StreamableToolEndpoint {
+			panic("broken streamable middleware")
+		},
+		EnhancedInvokable: func(EnhancedInvokableToolEndpoint) EnhancedInvokableToolEndpoint {
+			panic("broken enhanced invokable middleware")
+		},
+		EnhancedStreamable: func(EnhancedStreamableToolEndpoint) EnhancedStreamableToolEndpoint {
+			panic("broken enhanced streamable middleware")
+		},
+	})
+	if _, err := guarded.Invokable(func(context.Context, *ToolInput) (*ToolOutput, error) {
+		return &ToolOutput{}, nil
+	})(context.Background(), &ToolInput{}); !errors.Is(err, ErrToolPolicyPanic) {
+		t.Fatalf("Invokable middleware error = %v, want ErrToolPolicyPanic", err)
+	}
+	if _, err := guarded.Streamable(func(context.Context, *ToolInput) (*StreamToolOutput, error) {
+		return &StreamToolOutput{}, nil
+	})(context.Background(), &ToolInput{}); !errors.Is(err, ErrToolPolicyPanic) {
+		t.Fatalf("Streamable middleware error = %v, want ErrToolPolicyPanic", err)
+	}
+	if _, err := guarded.EnhancedInvokable(func(context.Context, *ToolInput) (*EnhancedInvokableToolOutput, error) {
+		return &EnhancedInvokableToolOutput{}, nil
+	})(context.Background(), &ToolInput{}); !errors.Is(err, ErrToolPolicyPanic) {
+		t.Fatalf("EnhancedInvokable middleware error = %v, want ErrToolPolicyPanic", err)
+	}
+	if _, err := guarded.EnhancedStreamable(func(context.Context, *ToolInput) (*EnhancedStreamableToolOutput, error) {
+		return &EnhancedStreamableToolOutput{}, nil
+	})(context.Background(), &ToolInput{}); !errors.Is(err, ErrToolPolicyPanic) {
+		t.Fatalf("EnhancedStreamable middleware error = %v, want ErrToolPolicyPanic", err)
+	}
+}
+
+func TestAgentReportsToolMiddlewareFactoryPanic(t *testing.T) {
+	tool := MustMockTool("broken", "broken middleware", func(context.Context, string) (string, error) {
+		return "unused", nil
+	})
+	agent, err := New(context.Background(), &Config{
+		Model: NewMockChatModel(MockModelToolCallWithID("broken-call", "broken", `""`)),
+		Tools: MockTools(tool),
+		ToolPolicy: &ToolPolicy{Middlewares: []ToolMiddleware{{
+			Invokable: func(InvokableToolEndpoint) InvokableToolEndpoint {
+				panic("broken middleware factory")
+			},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = agent.Close() })
+	if _, err := agent.Ask(context.Background(), "run"); !errors.Is(err, ErrToolPolicyPanic) {
+		t.Fatalf("Ask() error = %v, want ErrToolPolicyPanic", err)
+	}
+}
+
 func TestToolPolicyIsolatesToolEntryPointPanics(t *testing.T) {
 	ctx := context.Background()
 	input := &ToolInput{Name: "broken", CallID: "call-1"}

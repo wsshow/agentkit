@@ -56,8 +56,95 @@ func (p *ToolPolicy) toolsNodeConfig(tools []Tool) compose.ToolsNodeConfig {
 	config.UnknownToolsHandler = guardedToolStringHandler("UnknownTool", p.UnknownTool)
 	config.ToolArgumentsHandler = guardedToolStringHandler("RewriteArguments", p.RewriteArguments)
 	config.ExecuteSequentially = p.Sequential
-	config.ToolCallMiddlewares = append(config.ToolCallMiddlewares, p.Middlewares...)
+	for _, middleware := range p.Middlewares {
+		config.ToolCallMiddlewares = append(config.ToolCallMiddlewares, guardToolMiddleware(middleware))
+	}
 	return config
+}
+
+func guardToolMiddleware(middleware ToolMiddleware) ToolMiddleware {
+	guarded := ToolMiddleware{}
+	if middleware.Invokable != nil {
+		guarded.Invokable = guardInvokableToolMiddleware(middleware.Invokable)
+	}
+	if middleware.Streamable != nil {
+		guarded.Streamable = guardStreamableToolMiddleware(middleware.Streamable)
+	}
+	if middleware.EnhancedInvokable != nil {
+		guarded.EnhancedInvokable = guardEnhancedInvokableToolMiddleware(middleware.EnhancedInvokable)
+	}
+	if middleware.EnhancedStreamable != nil {
+		guarded.EnhancedStreamable = guardEnhancedStreamableToolMiddleware(middleware.EnhancedStreamable)
+	}
+	return guarded
+}
+
+func guardInvokableToolMiddleware(middleware InvokableToolMiddleware) InvokableToolMiddleware {
+	return func(next InvokableToolEndpoint) (wrapped InvokableToolEndpoint) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				err := toolPolicyPanicError("ToolMiddleware.Invokable", recovered)
+				wrapped = func(context.Context, *ToolInput) (*ToolOutput, error) { return nil, err }
+			}
+		}()
+		wrapped = middleware(next)
+		if wrapped == nil {
+			err := errors.New("agentkit: ToolMiddleware.Invokable returned nil")
+			return func(context.Context, *ToolInput) (*ToolOutput, error) { return nil, err }
+		}
+		return wrapped
+	}
+}
+
+func guardStreamableToolMiddleware(middleware StreamableToolMiddleware) StreamableToolMiddleware {
+	return func(next StreamableToolEndpoint) (wrapped StreamableToolEndpoint) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				err := toolPolicyPanicError("ToolMiddleware.Streamable", recovered)
+				wrapped = func(context.Context, *ToolInput) (*StreamToolOutput, error) { return nil, err }
+			}
+		}()
+		wrapped = middleware(next)
+		if wrapped == nil {
+			err := errors.New("agentkit: ToolMiddleware.Streamable returned nil")
+			return func(context.Context, *ToolInput) (*StreamToolOutput, error) { return nil, err }
+		}
+		return wrapped
+	}
+}
+
+func guardEnhancedInvokableToolMiddleware(middleware EnhancedInvokableToolMiddleware) EnhancedInvokableToolMiddleware {
+	return func(next EnhancedInvokableToolEndpoint) (wrapped EnhancedInvokableToolEndpoint) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				err := toolPolicyPanicError("ToolMiddleware.EnhancedInvokable", recovered)
+				wrapped = func(context.Context, *ToolInput) (*EnhancedInvokableToolOutput, error) { return nil, err }
+			}
+		}()
+		wrapped = middleware(next)
+		if wrapped == nil {
+			err := errors.New("agentkit: ToolMiddleware.EnhancedInvokable returned nil")
+			return func(context.Context, *ToolInput) (*EnhancedInvokableToolOutput, error) { return nil, err }
+		}
+		return wrapped
+	}
+}
+
+func guardEnhancedStreamableToolMiddleware(middleware EnhancedStreamableToolMiddleware) EnhancedStreamableToolMiddleware {
+	return func(next EnhancedStreamableToolEndpoint) (wrapped EnhancedStreamableToolEndpoint) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				err := toolPolicyPanicError("ToolMiddleware.EnhancedStreamable", recovered)
+				wrapped = func(context.Context, *ToolInput) (*EnhancedStreamableToolOutput, error) { return nil, err }
+			}
+		}()
+		wrapped = middleware(next)
+		if wrapped == nil {
+			err := errors.New("agentkit: ToolMiddleware.EnhancedStreamable returned nil")
+			return func(context.Context, *ToolInput) (*EnhancedStreamableToolOutput, error) { return nil, err }
+		}
+		return wrapped
+	}
 }
 
 func guardedToolStringHandler(
@@ -75,8 +162,12 @@ func guardedToolStringHandler(
 
 func recoverToolPolicyPanic(name string, err *error) {
 	if value := recover(); value != nil {
-		*err = fmt.Errorf("%w in %s: %v", ErrToolPolicyPanic, name, value)
+		*err = toolPolicyPanicError(name, value)
 	}
+}
+
+func toolPolicyPanicError(name string, value any) error {
+	return fmt.Errorf("%w in %s: %v", ErrToolPolicyPanic, name, value)
 }
 
 func validateToolPolicy(ctx context.Context, tools []Tool, skills *SkillsConfig, policy *ToolPolicy) (map[string]struct{}, error) {
