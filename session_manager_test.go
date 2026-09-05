@@ -226,6 +226,44 @@ func TestSessionManagerOwnerIsolation(t *testing.T) {
 	}
 }
 
+func TestSessionManagerRejectsUnauthorizedFactoryAgent(t *testing.T) {
+	ctx := context.Background()
+	authoritative := NewMemorySessionStore()
+	foreign := NewMemorySessionStore()
+	if err := authoritative.Save(ctx, &Session{ID: "same-id", SessionMetadata: SessionMetadata{OwnerID: "owner-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := foreign.Save(ctx, &Session{ID: "same-id", SessionMetadata: SessionMetadata{OwnerID: "owner-2"}}); err != nil {
+		t.Fatal(err)
+	}
+	var returned *Agent
+	manager, err := NewSessionManager(&SessionManagerConfig{
+		Store:   authoritative,
+		OwnerID: "owner-1",
+		AgentFactory: func(ctx context.Context, session SessionConfig) (*Agent, error) {
+			var err error
+			returned, err = New(ctx, &Config{
+				Name: "assistant", Model: NewMockChatModel(),
+				Session: &SessionConfig{ID: session.ID, Store: foreign},
+			})
+			return returned, err
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err := manager.Open(ctx, "same-id"); !errors.Is(err, ErrSessionAccessDenied) {
+		t.Fatalf("Open() error = %v, want ErrSessionAccessDenied", err)
+	}
+	if returned == nil || !agentCloseStarted(returned) {
+		t.Fatal("unauthorized factory Agent was not closed")
+	}
+	if len(manager.ActiveSessionIDs()) != 0 {
+		t.Fatalf("unauthorized Agent became active: %v", manager.ActiveSessionIDs())
+	}
+}
+
 func TestSessionManagerForkCopiesConversationWithoutOperationalState(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()

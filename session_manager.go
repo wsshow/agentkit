@@ -552,6 +552,10 @@ func (m *SessionManager) buildAgent(ctx context.Context, id string) (agent *Agen
 		_ = agent.Close()
 		return nil, fmt.Errorf("agentkit: session agent factory returned an agent not bound to session %q", id)
 	}
+	if err := m.authorize(snapshot); err != nil {
+		_ = agent.Close()
+		return nil, fmt.Errorf("agentkit: session agent factory returned an unauthorized agent: %w", err)
+	}
 	if agentCloseStarted(agent) {
 		_ = agent.Close()
 		return nil, fmt.Errorf("agentkit: session agent factory returned a closed agent for %q", id)
