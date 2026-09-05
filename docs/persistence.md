@@ -1,0 +1,99 @@
+# Sessions and Persistence
+
+[中文](zh/persistence.md) · [Documentation index](README.md)
+
+Sessions make conversation state durable without adding save calls around every run. Checkpoints preserve unfinished HITL work, while the same built-in stores can also supply goal and large-result storage.
+
+## Automatic Restore and Save
+
+```go
+store, err := agentkit.NewFileSessionStore("./data/sessions")
+if err != nil {
+	log.Fatal(err)
+}
+
+agent, err := agentkit.New(ctx, &agentkit.Config{
+	Name:  "assistant",
+	Model: chatModel,
+	Session: &agentkit.SessionConfig{
+		ID:    "user-123",
+		Store: store,
+	},
+})
+```
+
+`agentkit.New` restores an existing session with the same ID. `Prompt`, `Send`, `Continue`, and `Resume` save automatically, including when a model fails or the run is canceled. The session stores both full history and compacted model context when [compaction](context.md) is enabled.
+
+Use `History: savedHistory` for manual restoration instead. `History` and `Session` are mutually exclusive so the source of truth is unambiguous.
+
+## Direct Session Operations
+
+```go
+sessions, err := store.List(ctx)
+saved, err := store.Load(ctx, "user-123")
+err = store.Delete(ctx, "user-123")
+```
+
+Deleting a missing session succeeds. Built-in deletion also removes the session's checkpoint, goals, and session-owned reduced tool results. Stop workers using the session before deleting it. Repeating deletion cleans identifiable orphan goals and results.
+
+The file store hashes IDs into safe filenames and uses synced temporary files, atomic replacement, and synced directory metadata. This prevents path traversal through a session ID and avoids exposing a half-written snapshot after a crash.
+
+## Manual State Changes
+
+```go
+history := agent.History()
+session := agent.Session()
+
+agent.SetHistory(replacement)
+err := agent.SaveSession(ctx)
+```
+
+`History` and `Session` return copies. `SetHistory` invalidates stale checkpoints; call `SaveSession` when the replacement must be immediately durable. `Reset` clears history and queues after waiting for an active run to finish.
+
+## Durable HITL Checkpoints
+
+Both built-in session stores automatically provide a matching checkpoint store. A file-backed Agent can therefore resume a pending HITL interrupt after the Agent or process is recreated, without additional wiring.
+
+Pending IDs are available through `Agent.PendingInterrupts` and `Session.PendingInterrupts`. A successful `Resume` consumes the checkpoint. `ClearCheckpoint`, `Reset`, and `SetHistory` invalidate a checkpoint that no longer matches the conversation.
+
+Without a session, configure `Config.CheckPointStore` directly with `agentkit.NewFileCheckpointStore` or a custom implementation.
+
+## Storage Selection
+
+Use `agentkit.NewMemorySessionStore()` for tests and one-process ephemeral services. Use `agentkit.NewFileSessionStore()` for a local worker that needs restart durability.
+
+For a database, implement `SessionStore`. A custom store may also implement:
+
+- `CheckpointStoreProvider` for automatic durable HITL checkpoints;
+- `GoalStoreProvider` for [durable goals](goals.md); and
+- `ToolResultStoreProvider` for [large tool result reduction](tools.md#large-tool-result-reduction).
+
+Custom persistence methods must honor their non-nil context and return promptly after it is canceled. `Config.PersistenceTimeout` defaults to `DefaultPersistenceTimeout` (30 seconds) for internal cleanup after cancellation. Increase it only when the backend legitimately needs more time.
+
+## Concurrent Writers
+
+Built-in stores use `Session.Revision` for optimistic concurrency. If two Agents restore the same revision, the stale writer receives `ErrSessionConflict` instead of silently overwriting newer history.
+
+Custom stores should provide equivalent compare-and-swap behavior. AgentKit intentionally does not merge divergent conversations because a generic merge can reorder tool calls or corrupt meaning.
+
+The file store targets a local single-process worker. A multi-replica service should implement session, checkpoint, goal, and lease updates transactionally in a shared database.
+
+## Retention
+
+Long-running services can prune resources from their own scheduler:
+
+```go
+report, err := agentkit.PruneResources(ctx, store, agentkit.RetentionPolicy{
+	SessionIdleTime:       30 * 24 * time.Hour,
+	CompletedGoalAge:      7 * 24 * time.Hour,
+	DetachedToolResultAge: 24 * time.Hour,
+})
+```
+
+The zero policy deletes nothing. Pruning never deletes active, paused, or blocked goals, nor a session-owned result while its session may still reference it. Stop workers for sessions eligible for idle deletion first. The report counts directly deleted entries; cascaded resources are not counted twice.
+
+## Related Guides
+
+- [Durable goals](goals.md)
+- [Context management](context.md)
+- [Tool management](tools.md)
