@@ -304,6 +304,67 @@ func TestSessionManagerForkCopiesConversationWithoutOperationalState(t *testing.
 	}
 }
 
+func TestSessionManagerForkWaitsForSourceRunToSettle(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemorySessionStore()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	waitTool := MustMockTool("wait", "wait for release", func(ctx context.Context, _ string) (string, error) {
+		close(started)
+		select {
+		case <-release:
+			return "released", nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+	manager, err := NewSessionManager(&SessionManagerConfig{
+		Store: store,
+		AgentConfig: &Config{
+			Name: "assistant",
+			Model: NewMockChatModel(
+				MockModelToolCallWithID("wait-call", "wait", `""`),
+				MockModelText("done"),
+			),
+			Tools: MockTools(waitTool),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	source, err := manager.CreateWithOptions(ctx, CreateSessionOptions{ID: "source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan error, 1)
+	go func() { runDone <- source.Prompt(ctx, "start") }()
+	<-started
+
+	forkCtx, cancelFork := context.WithTimeout(ctx, 20*time.Millisecond)
+	_, err = manager.Fork(forkCtx, "source", CreateSessionOptions{ID: "too-early"})
+	cancelFork()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Fork(running source) error = %v, want deadline exceeded", err)
+	}
+	if _, err := store.Load(ctx, "too-early"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("timed-out Fork created a target: %v", err)
+	}
+
+	close(release)
+	if err := <-runDone; err != nil {
+		t.Fatalf("Prompt() error = %v", err)
+	}
+	target, err := manager.Fork(ctx, "source", CreateSessionOptions{ID: "settled"})
+	if err != nil {
+		t.Fatalf("Fork(settled source) error = %v", err)
+	}
+	contents := schemaMessageContents(target.History())
+	if !slices.Equal(contents, []string{"start", "", "released", "done"}) {
+		t.Fatalf("forked history = %v", contents)
+	}
+}
+
 func TestSessionManagerSerializesConcurrentOpen(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemorySessionStore()

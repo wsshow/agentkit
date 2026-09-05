@@ -340,7 +340,7 @@ func (m *SessionManager) Fork(ctx context.Context, sourceID string, options Crea
 	if err != nil {
 		return nil, err
 	}
-	source, err := m.getLocked(ctx, sourceID)
+	source, err := m.forkSourceLocked(ctx, sourceID)
 	sourceRelease()
 	if err != nil {
 		return nil, err
@@ -359,6 +359,31 @@ func (m *SessionManager) Fork(ctx context.Context, sourceID string, options Crea
 	defer targetRelease()
 	agent, _, err := m.createAndOpen(ctx, target)
 	return agent, err
+}
+
+func (m *SessionManager) forkSourceLocked(ctx context.Context, id string) (*Session, error) {
+	agent, err := m.usableActiveLocked(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if agent == nil {
+		session, err := sessionStoreLoad(ctx, m.store, id)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.authorize(session); err != nil {
+			return nil, err
+		}
+		return session, nil
+	}
+	session, err := agent.sessionWhenIdle(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.authorize(session); err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 // CloseSession 关闭并移除一个活动 Agent，但保留持久化会话。重复调用是安全的。

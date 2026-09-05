@@ -803,6 +803,10 @@ func (a *Agent) ContextHistory() []*schema.Message {
 func (a *Agent) Session() *Session {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.sessionLocked()
+}
+
+func (a *Agent) sessionLocked() *Session {
 	if a.sessionStore == nil {
 		return nil
 	}
@@ -817,6 +821,30 @@ func (a *Agent) Session() *Session {
 		PendingInterrupts: cloneInterruptPoints(a.pendingInterrupts),
 		Archived:          a.sessionArchived,
 		Revision:          a.sessionRevision,
+	}
+}
+
+func (a *Agent) sessionWhenIdle(ctx context.Context) (*Session, error) {
+	if ctx == nil {
+		return nil, errors.New("agentkit: context is required")
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		if !a.running {
+			session := a.sessionLocked()
+			a.mu.Unlock()
+			return session, nil
+		}
+		done := a.done
+		a.mu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 }
 
