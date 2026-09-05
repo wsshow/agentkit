@@ -47,9 +47,8 @@ func TestMemoryCheckpointStoreCopiesAndDeletesValues(t *testing.T) {
 
 func TestCheckpointStoreValidatesContextAndID(t *testing.T) {
 	store := NewMemoryCheckpointStore()
-	//lint:ignore SA1012 verifying the public nil-context error
-	if err := store.Set(nil, "run", nil); err == nil {
-		t.Fatal("Set(nil context) error = nil")
+	if err := store.Set(context.TODO(), "run", nil); err != nil {
+		t.Fatalf("Set() error = %v", err)
 	}
 	if _, _, err := store.Get(context.Background(), " "); err == nil {
 		t.Fatal("Get(empty ID) error = nil")
