@@ -180,7 +180,8 @@ func (s *MemorySessionStore) Delete(ctx context.Context, id string) error {
 	if err := validateSessionContextAndID(ctx, id); err != nil {
 		return err
 	}
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var checkpointID string
 	if session := s.sessions[id]; session != nil {
 		checkpointID = session.CheckpointID
@@ -197,16 +198,13 @@ func (s *MemorySessionStore) Delete(ctx context.Context, id string) error {
 	if s.toolResults != nil {
 		toolResults = s.toolResults
 	}
-	s.mu.RUnlock()
 	if err := deleteSessionResources(ctx, id, checkpointID, checkpoints, goals, toolResults); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.mu.Lock()
 	delete(s.sessions, id)
-	s.mu.Unlock()
 	return nil
 }
 

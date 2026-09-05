@@ -158,9 +158,9 @@ func (s *FileSessionStore) Delete(ctx context.Context, id string) error {
 	if err := validateSessionContextAndID(ctx, id); err != nil {
 		return err
 	}
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	session, loadErr := s.load(id)
-	s.mu.RUnlock()
 	if errors.Is(loadErr, ErrSessionNotFound) {
 		loadErr = nil
 	}
@@ -176,8 +176,6 @@ func (s *FileSessionStore) Delete(ctx context.Context, id string) error {
 		return errors.Join(loadErr, err)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	removed := false
 	if err := os.Remove(s.path(id)); err == nil {
 		removed = true

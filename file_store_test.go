@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 )
@@ -91,5 +92,88 @@ func TestFileSessionStoresSerializeRevisionChecksAcrossInstances(t *testing.T) {
 	}
 	if succeeded != 1 || conflicted != 1 {
 		t.Fatalf("concurrent saves: succeeded=%d conflicted=%d, want 1 and 1", succeeded, conflicted)
+	}
+}
+
+func TestSessionStoreDeleteFencesConcurrentSave(t *testing.T) {
+	t.Run("memory", func(t *testing.T) {
+		store := NewMemorySessionStore()
+		testSessionStoreDeleteFencesConcurrentSave(t, store, store.CheckpointStore(), &store.goals.mu)
+	})
+	t.Run("file", func(t *testing.T) {
+		store, err := NewFileSessionStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		testSessionStoreDeleteFencesConcurrentSave(t, store, store.CheckpointStore(), store.goals.mu)
+	})
+}
+
+func testSessionStoreDeleteFencesConcurrentSave(
+	t *testing.T,
+	store SessionStore,
+	checkpoints CheckpointStore,
+	goalLock *sync.RWMutex,
+) {
+	t.Helper()
+	ctx := context.Background()
+	const sessionID = "delete-save-race"
+	const checkpointID = "delete-save-checkpoint"
+	if err := store.Save(ctx, &Session{ID: sessionID, CheckpointID: checkpointID}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.Load(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkpoints.Set(ctx, checkpointID, []byte("checkpoint")); err != nil {
+		t.Fatal(err)
+	}
+
+	goalLock.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			goalLock.Unlock()
+		}
+	}()
+	deleteDone := make(chan error, 1)
+	go func() { deleteDone <- store.Delete(ctx, sessionID) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, exists, err := checkpoints.Get(ctx, checkpointID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Delete() did not reach resource cleanup")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	saveDone := make(chan error, 1)
+	go func() { saveDone <- store.Save(ctx, snapshot) }()
+	var earlySave error
+	var savedEarly bool
+	select {
+	case earlySave = <-saveDone:
+		savedEarly = true
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	goalLock.Unlock()
+	locked = false
+	if err := <-deleteDone; err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if savedEarly {
+		t.Fatalf("Save() completed before Delete(): %v", earlySave)
+	}
+	if err := <-saveDone; !errors.Is(err, ErrSessionConflict) {
+		t.Fatalf("Save() error = %v, want ErrSessionConflict", err)
 	}
 }
