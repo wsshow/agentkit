@@ -52,6 +52,8 @@ err := agent.SaveSession(ctx)
 
 `History` and `Session` return copies. `SetHistory` invalidates stale checkpoints; call `SaveSession` when the replacement must be immediately durable. `Reset` clears history and queues after waiting for an active run to finish.
 
+Nil message entries can appear when external JSON or database rows are assembled incorrectly. AgentKit drops those empty entries at the common history-copy boundary, so manual history and restored sessions cannot pass a nil message into the model runtime. Non-nil messages remain in their original order.
+
 Call `SaveSession` only while the Agent is idle. A concurrent call returns `ErrAgentRunning` instead of persisting half of a tool-call turn. Normal `Prompt`, `Send`, `Continue`, and `Resume` execution still saves internally after the complete run settles.
 
 ## Durable HITL Checkpoints

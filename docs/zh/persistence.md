@@ -52,6 +52,8 @@ err := agent.SaveSession(ctx)
 
 `History` 和 `Session` 返回副本。`SetHistory` 会使旧检查点失效；需要立即持久化替换内容时调用 `SaveSession`。`Reset` 会等待当前运行结束，然后清空历史和队列。
 
+外部 JSON 或数据库记录拼装错误时可能产生 nil 消息项。AgentKit 会在统一历史复制边界丢弃这些空项，避免手工历史或恢复会话把 nil 消息传进模型运行时；其余非 nil 消息的原始顺序保持不变。
+
 只在 Agent 空闲时调用 `SaveSession`。并发调用会返回 `ErrAgentRunning`，而不是把半个工具调用回合持久化。正常的 `Prompt`、`Send`、`Continue` 和 `Resume` 仍会在完整运行稳定结束后执行内部保存。
 
 ## 持久化 HITL 检查点
